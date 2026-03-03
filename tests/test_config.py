@@ -18,7 +18,6 @@ class TestAppConfig:
         assert config.day_folder == ""
         assert config.night_folder == ""
         assert config.printer_name == ""
-        assert config.headers_footers_only is False
 
     def test_with_values(self):
         """Config should store provided values."""
@@ -26,12 +25,10 @@ class TestAppConfig:
             day_folder="/path/to/day",
             night_folder="/path/to/night",
             printer_name="My Printer",
-            headers_footers_only=True,
         )
         assert config.day_folder == "/path/to/day"
         assert config.night_folder == "/path/to/night"
         assert config.printer_name == "My Printer"
-        assert config.headers_footers_only is True
 
     def test_to_dict(self):
         """Config should convert to dictionary."""
@@ -39,14 +36,12 @@ class TestAppConfig:
             day_folder="/path/to/day",
             night_folder="/path/to/night",
             printer_name="My Printer",
-            headers_footers_only=True,
         )
         result = config.to_dict()
         assert result == {
             "day_folder": "/path/to/day",
             "night_folder": "/path/to/night",
             "printer_name": "My Printer",
-            "headers_footers_only": True,
         }
 
     def test_from_dict(self):
@@ -55,13 +50,11 @@ class TestAppConfig:
             "day_folder": "/path/to/day",
             "night_folder": "/path/to/night",
             "printer_name": "My Printer",
-            "headers_footers_only": True,
         }
         config = AppConfig.from_dict(data)
         assert config.day_folder == "/path/to/day"
         assert config.night_folder == "/path/to/night"
         assert config.printer_name == "My Printer"
-        assert config.headers_footers_only is True
 
     def test_from_dict_with_missing_keys(self):
         """Config should use defaults for missing keys."""
@@ -70,8 +63,6 @@ class TestAppConfig:
         assert config.day_folder == "/path/to/day"
         assert config.night_folder == ""
         assert config.printer_name == ""
-        assert config.headers_footers_only is False
-
 
     def test_from_dict_coerces_null_to_empty_string(self):
         """from_dict should coerce None values to empty strings."""
@@ -87,15 +78,6 @@ class TestAppConfig:
         config = AppConfig.from_dict(data)
         assert config.day_folder == "123"
         assert config.night_folder == "456"
-
-    def test_from_dict_bool_coercion(self):
-        """from_dict should coerce truthy/falsy values for headers_footers_only."""
-        config = AppConfig.from_dict({"headers_footers_only": 1})
-        assert config.headers_footers_only is True
-        config = AppConfig.from_dict({"headers_footers_only": "yes"})
-        assert config.headers_footers_only is True
-        config = AppConfig.from_dict({"headers_footers_only": 0})
-        assert config.headers_footers_only is False
 
 
 class TestConfigManager:

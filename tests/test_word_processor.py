@@ -102,26 +102,6 @@ class TestWordProcessor:
             calls = [c[0][2] for c in mock_exec.call_args_list]
             assert "Thursday, January 15, 2026" in calls
 
-    def test_replace_dates_headers_only_passes_filter(self, wp):
-        """headers_footers_only should pass a story-type filter through."""
-
-        mock_doc = MagicMock()
-        current_date = date(2026, 1, 15)
-
-        with patch.object(wp, "_normalize_spaces_in_doc") as mock_norm, patch.object(
-            wp, "_execute_replace", return_value=False
-        ) as mock_exec:
-            wp.replace_dates(mock_doc, current_date, headers_footers_only=True)
-
-        assert mock_norm.call_count == 1
-        # allowed_story_types is passed as kwarg
-        assert "allowed_story_types" in mock_norm.call_args.kwargs
-        assert mock_norm.call_args.kwargs["allowed_story_types"] is not None
-
-        assert mock_exec.call_count == 6
-        assert "allowed_story_types" in mock_exec.call_args.kwargs
-        assert mock_exec.call_args.kwargs["allowed_story_types"] is not None
-
     @patch("src.word_processor.pythoncom.CoInitialize")
     @patch("src.word_processor.win32_client.Dispatch")
     def test_initialize_success(self, mock_dispatch, mock_coinit):
@@ -465,6 +445,7 @@ class TestWordProcessor:
         wp.word_app.Documents.Open.return_value = mock_doc
 
         call_log = []
+
         def tracking_safe_com_call(f, *a, **kw):
             call_log.append((f, a, kw))
             return f(*a)

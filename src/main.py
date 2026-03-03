@@ -1,7 +1,7 @@
 """
-Shift Automator - Main Application Entry Point
+ShiftPress - Main Application Entry Point
 
-A high-performance desktop application for automating shift schedule printing.
+Batch print shift schedules via Word COM automation.
 """
 
 import threading
@@ -69,7 +69,7 @@ def _compute_batch_size(start_date: date, end_date: date) -> tuple[int, int]:
     return total_days, total_jobs
 
 
-class ShiftAutomatorApp:
+class ShiftPressApp:
     """Main application controller.
 
     Coordinates configuration management, input validation, preflight
@@ -105,7 +105,7 @@ class ShiftAutomatorApp:
         # Handle window close gracefully
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        logger.info("Shift Automator application initialized")
+        logger.info("ShiftPress application initialized")
 
     def _safe_after(self, callback: Callable[[], None]) -> None:
         """Schedule a UI callback if the window is still alive.
@@ -140,8 +140,6 @@ class ShiftAutomatorApp:
                 self.ui.night_entry.insert(0, config.night_folder)
             if config.printer_name and self.ui.printer_var:
                 self.ui.printer_var.set(config.printer_name)
-            if self.ui.headers_only_var:
-                self.ui.headers_only_var.set(bool(config.headers_footers_only))
             logger.info("Configuration loaded successfully")
         except Exception as e:
             logger.error(f"Error loading configuration: {e}")
@@ -349,16 +347,21 @@ class ShiftAutomatorApp:
         batch_params = {
             "start_date": self.ui.get_start_date(),
             "end_date": self.ui.get_end_date(),
-            "day_folder": (self.ui.get_day_folder() or "").strip().strip('"').strip("'"),
-            "night_folder": (self.ui.get_night_folder() or "").strip().strip('"').strip("'"),
+            "day_folder": (self.ui.get_day_folder() or "")
+            .strip()
+            .strip('"')
+            .strip("'"),
+            "night_folder": (self.ui.get_night_folder() or "")
+            .strip()
+            .strip('"')
+            .strip("'"),
             "printer_name": (self.ui.get_printer_name() or "").strip(),
-            "headers_footers_only": self.ui.get_headers_footers_only(),
         }
 
         # Update button text to STOP and disable inputs during processing
         self.ui.set_inputs_enabled(False)
         if self.ui.print_btn:
-            self.ui.print_btn.config(text="STOP EXECUTION", bg=COLORS.error)
+            self.ui.print_btn.config(text="Cancel", bg=COLORS.error)
 
         # Start processing thread with pre-collected values.
         # Non-daemon so that __exit__/finally COM cleanup runs even if the
@@ -390,7 +393,7 @@ class ShiftAutomatorApp:
             return
         self.ui.set_inputs_enabled(True)
         if self.ui.print_btn:
-            self.ui.print_btn.config(text="START EXECUTION", bg=COLORS.accent)
+            self.ui.print_btn.config(text="Print Schedules", bg=COLORS.accent)
         self.ui.set_print_button_state("normal")
 
     def _print_shift(
@@ -403,7 +406,6 @@ class ShiftAutomatorApp:
         shift_label: str,
         job_index: int,
         total_jobs: int,
-        headers_footers_only: bool,
         failed_operations: list[FailedOperation],
     ) -> None:
         """Print a single shift document and record failures.
@@ -417,7 +419,6 @@ class ShiftAutomatorApp:
             shift_label: Human-readable shift label (e.g. "Day" or "Night").
             job_index: Current 0-based job index (for progress display).
             total_jobs: Total number of jobs in the batch.
-            headers_footers_only: Whether to limit date replacement to headers/footers.
             failed_operations: Mutable list to append failure records to.
         """
         day_name = get_english_day_name(current_date)
@@ -438,7 +439,6 @@ class ShiftAutomatorApp:
             template,
             current_date,
             printer_name,
-            headers_footers_only=headers_footers_only,
         )
         if not success:
             failed_operations.append(
@@ -459,7 +459,7 @@ class ShiftAutomatorApp:
 
         Args:
             params: Pre-collected UI values with keys: start_date, end_date,
-                    day_folder, night_folder, printer_name, headers_footers_only
+                    day_folder, night_folder, printer_name
         """
         start_date = params["start_date"]
         end_date = params["end_date"]
@@ -472,14 +472,12 @@ class ShiftAutomatorApp:
         day_folder = params["day_folder"]
         night_folder = params["night_folder"]
         printer_name = params["printer_name"]
-        headers_footers_only = bool(params.get("headers_footers_only", False))
 
         # Save configuration
         config = AppConfig(
             day_folder=day_folder,
             night_folder=night_folder,
             printer_name=printer_name,
-            headers_footers_only=headers_footers_only,
         )
         self._save_config(config)
 
@@ -520,7 +518,6 @@ class ShiftAutomatorApp:
                         "Day",
                         job_index,
                         total_jobs,
-                        headers_footers_only,
                         failed_operations,
                     )
                     job_index += 1
@@ -539,7 +536,6 @@ class ShiftAutomatorApp:
                         "Night",
                         job_index,
                         total_jobs,
-                        headers_footers_only,
                         failed_operations,
                     )
                     job_index += 1
@@ -600,7 +596,6 @@ class ShiftAutomatorApp:
                 day_folder=(self.ui.get_day_folder() or "").strip(),
                 night_folder=(self.ui.get_night_folder() or "").strip(),
                 printer_name=printer,
-                headers_footers_only=self.ui.get_headers_footers_only(),
             )
             self._save_config(config)
         except Exception as e:
@@ -683,11 +678,11 @@ class ShiftAutomatorApp:
 def main() -> None:
     """Main entry point for the application."""
     setup_logging()
-    logger.info("Starting Shift Automator")
+    logger.info("Starting ShiftPress")
 
     try:
         root = tk.Tk()
-        app = ShiftAutomatorApp(root)
+        app = ShiftPressApp(root)
         app.ui.run()
     except Exception as e:
         logger.exception("Fatal error in main")
@@ -705,7 +700,7 @@ def main() -> None:
         except Exception:
             print(f"Fatal error: {e}")
     finally:
-        logger.info("Shift Automator shutting down")
+        logger.info("ShiftPress shutting down")
 
 
 if __name__ == "__main__":

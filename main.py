@@ -1,7 +1,7 @@
 """
-Shift Automator - Main Entry Point
+ShiftPress - Main Entry Point
 
-This is the main entry point for the Shift Automator application.
+This is the main entry point for the ShiftPress application.
 All application logic has been refactored into the src package.
 """
 

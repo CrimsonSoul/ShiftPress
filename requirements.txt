@@ -1,4 +1,4 @@
-# Runtime dependencies for Shift Automator
+# Runtime dependencies for ShiftPress
 
 pywin32>=311; platform_system == "Windows"
 

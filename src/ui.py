@@ -1,5 +1,5 @@
 """
-UI components for Shift Automator application.
+UI components for ShiftPress application.
 
 This module contains all Tkinter UI components and styling.
 """
@@ -46,12 +46,15 @@ logger = get_logger(__name__)
 # Imported lazily to avoid circular dependency; only used for version display.
 _APP_VERSION: Optional[str] = None
 
+# Placeholder text shown in empty path entries.
+_PATH_PLACEHOLDER = "Click Browse to select folder\u2026"
+
 
 def _get_version() -> str:
     """Return the package version string.
 
     Returns:
-        Version string (e.g. ``"2.0.0"``), or ``""`` if unavailable.
+        Version string (e.g. ``"2.1.0"``), or ``""`` if unavailable.
     """
     global _APP_VERSION
     if _APP_VERSION is None:
@@ -135,8 +138,31 @@ class _ToolTip:
             self._after_id = None
 
 
+def _setup_placeholder(entry: ttk.Entry, placeholder: str) -> None:
+    """Attach placeholder text behaviour to a ttk.Entry.
+
+    Shows *placeholder* in dim text when the entry is empty and unfocused.
+    Clears the placeholder on focus and restores it on blur if still empty.
+    """
+
+    def _show(_event: Any = None) -> None:
+        if not entry.get():
+            entry.config(foreground=COLORS.text_dim)
+            entry.insert(0, placeholder)
+
+    def _hide(_event: Any = None) -> None:
+        if entry.get() == placeholder:
+            entry.delete(0, tk.END)
+            entry.config(foreground=COLORS.text_main)
+
+    entry.bind("<FocusIn>", _hide, add="+")
+    entry.bind("<FocusOut>", _show, add="+")
+    # Show placeholder initially if entry is empty.
+    _show()
+
+
 class ScheduleAppUI:
-    """Main UI class for the Shift Automator application."""
+    """Main UI class for the ShiftPress application."""
 
     def __init__(self, root: tk.Tk):
         """
@@ -146,7 +172,7 @@ class ScheduleAppUI:
             root: The Tkinter root window
         """
         self.root = root
-        self.root.title("Shift Automator Pro")
+        self.root.title("ShiftPress")
         self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
         self.root.resizable(WINDOW_RESIZABLE, WINDOW_RESIZABLE)
         self.root.configure(bg=COLORS.background)
@@ -171,11 +197,10 @@ class ScheduleAppUI:
         self.start_date_picker: Optional[Any] = None
         self.end_date_picker: Optional[Any] = None
         self.printer_var: Optional[tk.StringVar] = None
-        self.headers_only_var: Optional[tk.BooleanVar] = None
-        self._hf_check: Optional[ttk.Checkbutton] = None
         self.status_label: Optional[ttk.Label] = None
         self.progress_var: Optional[tk.DoubleVar] = None
         self.progress: Optional[ttk.Progressbar] = None
+        self._progress_pct: Optional[ttk.Label] = None
         self.printer_dropdown: Optional[ttk.OptionMenu] = None
         self._refresh_btn: Optional[ttk.Button] = None
         self.print_btn: Optional[tk.Button] = None
@@ -196,7 +221,7 @@ class ScheduleAppUI:
 
     def _configure_styles(self) -> None:
         """Configure ttk styles for the application."""
-        # Card Layout (Relay Style)
+        # Base frame
         self.style.configure("TFrame", background=COLORS.background)
         self.style.configure(
             "TLabel",
@@ -204,6 +229,8 @@ class ScheduleAppUI:
             foreground=COLORS.text_main,
             font=FONTS.main,
         )
+
+        # Card frames (LabelFrame)
         self.style.configure(
             "TLabelframe",
             background=COLORS.background,
@@ -214,8 +241,8 @@ class ScheduleAppUI:
         self.style.configure(
             "TLabelframe.Label",
             background=COLORS.background,
-            foreground=COLORS.text_dim,
-            font=FONTS.sub,
+            foreground=COLORS.accent,
+            font=FONTS.card_title,
         )
 
         # Inputs
@@ -234,7 +261,7 @@ class ScheduleAppUI:
             foreground=[("disabled", COLORS.text_dim)],
         )
 
-        # Buttons (Unified SaaS Look)
+        # Buttons
         self.style.configure(
             "TButton",
             background=COLORS.surface,
@@ -253,10 +280,10 @@ class ScheduleAppUI:
             foreground=[("disabled", COLORS.text_dim)],
         )
 
-        # Progress
+        # Progress bar
         self.style.configure(
             "Horizontal.TProgressbar",
-            thickness=4,
+            thickness=8,
             troughcolor=COLORS.border,
             background=COLORS.accent,
         )
@@ -400,70 +427,72 @@ class ScheduleAppUI:
         except Exception as e:
             logger.error(f"Could not update printer dropdown: {e}")
 
+    # ------------------------------------------------------------------
+    # Widget creation
+    # ------------------------------------------------------------------
+
     def _create_widgets(self) -> None:
         """Create all UI widgets."""
-        # Background Canvas
         bg_canvas = ttk.Frame(self.root, padding="28")
         bg_canvas.pack(fill="both", expand=True)
 
-        # Header Section
+        # Header
         self._create_header(bg_canvas)
 
-        # Config Card
-        self._create_config_card(bg_canvas)
+        # Card 1 — Templates
+        self._create_templates_card(bg_canvas)
 
-        # Control Card
-        self._create_control_card(bg_canvas)
+        # Card 2 — Print Settings
+        self._create_print_settings_card(bg_canvas)
 
-        # Action Footer
+        # Footer (status + progress + action button)
         self._create_footer(bg_canvas)
 
     def _create_header(self, parent: ttk.Frame) -> None:
         """Create the header section."""
         header_row = ttk.Frame(parent)
-        header_row.pack(fill="x", pady=(0, 40))
+        header_row.pack(fill="x", pady=(0, 24))
 
         # Title row: app name + version badge
         title_row = ttk.Frame(header_row)
         title_row.pack(fill="x")
-        ttk.Label(title_row, text="Shift Automator Pro", style="Header.TLabel").pack(
-            side="left"
-        )
+        ttk.Label(title_row, text="ShiftPress", style="Header.TLabel").pack(side="left")
         version = _get_version()
         if version:
             ttk.Label(
                 title_row,
                 text=f"v{version}",
                 style="Sub.TLabel",
-            ).pack(side="left", padx=(12, 0), anchor="s", pady=(0, 6))
+            ).pack(side="left", padx=(12, 0), anchor="s", pady=(0, 4))
 
         ttk.Label(
             header_row,
-            text="High-performance batch scheduling & printing",
+            text="Batch print shift schedules",
             style="Sub.TLabel",
         ).pack(anchor="w", pady=(4, 0))
 
-    def _create_config_card(self, parent: ttk.Frame) -> None:
-        """Create the configuration card."""
-        config_card = ttk.LabelFrame(parent, text=" CONFIGURATION ", padding="24")
-        config_card.pack(fill="x", pady=(0, 20))
+    def _create_templates_card(self, parent: ttk.Frame) -> None:
+        """Create the Templates card (day / night template paths)."""
+        card = ttk.LabelFrame(parent, text=" Templates ", padding="20")
+        card.pack(fill="x", pady=(0, 16))
 
-        self.day_entry = self._create_path_row(config_card, "Day Templates", "")
-        self.night_entry = self._create_path_row(config_card, "Night Templates", "")
+        self.day_entry = self._create_path_row(card, "Day Templates", "")
+        self.night_entry = self._create_path_row(card, "Night Templates", "")
 
-    def _create_control_card(self, parent: ttk.Frame) -> None:
-        """Create the controls card."""
-        control_card = ttk.LabelFrame(parent, text=" CONTROLS ", padding="24")
-        control_card.pack(fill="x")
+        # Attach placeholder text to both entries.
+        _setup_placeholder(self.day_entry, _PATH_PLACEHOLDER)
+        _setup_placeholder(self.night_entry, _PATH_PLACEHOLDER)
 
-        # Date Range Row
-        self._create_date_range_row(control_card)
+    def _create_print_settings_card(self, parent: ttk.Frame) -> None:
+        """Create the Print Settings card (date range + printer)."""
+        card = ttk.LabelFrame(parent, text=" Print Settings ", padding="20")
+        card.pack(fill="x", pady=(0, 16))
 
-        # Printer Selection Row
-        self._create_printer_row(control_card)
+        # Date range
+        self._create_date_range_row(card)
 
-        # Advanced options
-        self._create_options_row(control_card)
+        # Printer
+        self._create_printer_row(card)
 
     def _create_date_range_row(self, parent: Union[ttk.Frame, ttk.LabelFrame]) -> None:
         """Create the date range selection row."""
@@ -502,7 +531,7 @@ class ScheduleAppUI:
         # Start Date
         start_wrap = ttk.Frame(range_row)
         start_wrap.pack(side="left", expand=True, fill="x", padx=(0, 12))
-        ttk.Label(start_wrap, text="START DATE", style="Sub.TLabel").pack(
+        ttk.Label(start_wrap, text="Start date", style="Sub.TLabel").pack(
             anchor="w", pady=(0, 8)
         )
         start_picker = self._create_date_entry(
@@ -521,7 +550,7 @@ class ScheduleAppUI:
         # End Date
         end_wrap = ttk.Frame(range_row)
         end_wrap.pack(side="left", expand=True, fill="x", padx=(12, 0))
-        ttk.Label(end_wrap, text="END DATE", style="Sub.TLabel").pack(
+        ttk.Label(end_wrap, text="End date", style="Sub.TLabel").pack(
             anchor="w", pady=(0, 8)
         )
         end_picker = self._create_date_entry(
@@ -618,7 +647,7 @@ class ScheduleAppUI:
         """Create the printer selection row."""
         output_row = ttk.Frame(parent)
         output_row.pack(fill="x", pady=(0, 0))
-        ttk.Label(output_row, text="TARGET PRINTER", style="Sub.TLabel").pack(
+        ttk.Label(output_row, text="Printer", style="Sub.TLabel").pack(
             anchor="w", pady=(0, 8)
         )
 
@@ -670,44 +699,17 @@ class ScheduleAppUI:
                 output_row, text=msg, style="Sub.TLabel", foreground=COLORS.error
             ).pack(anchor="w", pady=(4, 0))
 
-    def _create_options_row(self, parent: Union[ttk.Frame, ttk.LabelFrame]) -> None:
-        """Create advanced options row."""
-
-        options_row = ttk.Frame(parent)
-        options_row.pack(fill="x", pady=(16, 0))
-        ttk.Label(options_row, text="OPTIONS", style="Sub.TLabel").pack(
-            anchor="w", pady=(0, 6)
-        )
-
-        self.headers_only_var = tk.BooleanVar(value=False)
-        self._hf_check = ttk.Checkbutton(
-            options_row,
-            text="Replace dates in headers/footers only (safer)",
-            variable=self.headers_only_var,
-        )
-        self._hf_check.pack(anchor="w")
-        _ToolTip(
-            self._hf_check,
-            "Only update dates in document headers and footers,\n"
-            "leaving the body text unchanged.",
-        )
-        ttk.Label(
-            options_row,
-            text="When enabled, date patterns inside the document body are left unchanged.",
-            style="Sub.TLabel",
-        ).pack(anchor="w", padx=(20, 0))
-
     def _create_footer(self, parent: ttk.Frame) -> None:
-        """Create the action footer."""
+        """Create the action footer (status, progress, button)."""
         footer = ttk.Frame(parent)
         footer.pack(fill="x", side="bottom")
 
-        # Status Label
+        # Status row: label on left, Open Logs on right
         status_wrap = ttk.Frame(footer)
         status_wrap.pack(fill="x", pady=(0, 12))
         self.status_label = ttk.Label(
             status_wrap,
-            text="Select folders, dates, and printer to begin",
+            text="Ready when you are",
             style="Sub.TLabel",
         )
         self.status_label.pack(side="left")
@@ -722,20 +724,32 @@ class ScheduleAppUI:
         open_logs_btn.pack(side="right")
         _ToolTip(open_logs_btn, "Open configuration, log, and report folder")
 
-        # Progress Bar
+        # Progress row: bar + percentage label
+        progress_row = ttk.Frame(footer)
+        progress_row.pack(fill="x", pady=(0, 24))
+
         self.progress_var = tk.DoubleVar()
         self.progress = ttk.Progressbar(
-            footer,
+            progress_row,
             variable=self.progress_var,
             maximum=PROGRESS_MAX,
             style="Horizontal.TProgressbar",
         )
-        self.progress.pack(fill="x", pady=(0, 24))
+        self.progress.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
-        # Print Button
+        self._progress_pct = ttk.Label(
+            progress_row,
+            text="0%",
+            style="Sub.TLabel",
+            width=5,
+            anchor="e",
+        )
+        self._progress_pct.pack(side="right")
+
+        # Action button
         self.print_btn = tk.Button(
             footer,
-            text="START EXECUTION",
+            text="Print Schedules",
             bg=COLORS.accent,
             fg=COLORS.text_main,
             font=FONTS.button,
@@ -791,20 +805,30 @@ class ScheduleAppUI:
             entry: Entry widget to update with selected path
         """
         current = entry.get().strip()
+        # Ignore placeholder text when determining initial directory.
+        if current == _PATH_PLACEHOLDER:
+            current = ""
         initial = current if current and os.path.isdir(current) else None
         path = filedialog.askdirectory(initialdir=initial)
         if path:
             entry.delete(0, tk.END)
+            entry.config(foreground=COLORS.text_main)
             entry.insert(0, path)
             logger.debug(f"Selected folder: {path}")
 
+    # ------------------------------------------------------------------
+    # Public getters
+    # ------------------------------------------------------------------
+
     def get_day_folder(self) -> str:
         """Get the day folder path."""
-        return self.day_entry.get() if self.day_entry else ""
+        val = self.day_entry.get() if self.day_entry else ""
+        return "" if val == _PATH_PLACEHOLDER else val
 
     def get_night_folder(self) -> str:
         """Get the night folder path."""
-        return self.night_entry.get() if self.night_entry else ""
+        val = self.night_entry.get() if self.night_entry else ""
+        return "" if val == _PATH_PLACEHOLDER else val
 
     def get_printer_name(self) -> str:
         """Get the selected printer name."""
@@ -813,10 +837,6 @@ class ScheduleAppUI:
     def get_available_printers(self) -> list[str]:
         """Return the available printers list (best-effort)."""
         return list(self._cached_printers)
-
-    def get_headers_footers_only(self) -> bool:
-        """Return True if date replacement should only touch headers/footers."""
-        return bool(self.headers_only_var.get()) if self.headers_only_var else False
 
     def get_start_date(self) -> Optional[date]:
         """Get the start date, or None if unavailable or invalid."""
@@ -837,6 +857,10 @@ class ScheduleAppUI:
         except (ValueError, AttributeError):
             logger.warning("Could not parse end date from picker")
             return None
+
+    # ------------------------------------------------------------------
+    # Public setters / commands
+    # ------------------------------------------------------------------
 
     def set_start_command(
         self,
@@ -888,11 +912,6 @@ class ScheduleAppUI:
                 self._refresh_btn.config(state=state)
             except Exception as e:
                 logger.debug(f"Could not set refresh button state: {e}")
-        if self._hf_check is not None:
-            try:
-                self._hf_check.config(state=state)
-            except Exception as e:
-                logger.debug(f"Could not set checkbutton state: {e}")
 
     def set_print_button_state(self, state: Literal["normal", "disabled"]) -> None:
         """
@@ -931,13 +950,21 @@ class ScheduleAppUI:
                 msg_lower = message.lower()
                 if "complete" in msg_lower:
                     style = "Success.TLabel"
-                elif "cancel" in msg_lower or "error" in msg_lower or "fail" in msg_lower:
+                elif (
+                    "cancel" in msg_lower or "error" in msg_lower or "fail" in msg_lower
+                ):
                     style = "Error.TLabel"
                 else:
                     style = "Sub.TLabel"
             self.status_label.config(text=message, style=style)
         if self.progress_var:
             self.progress_var.set(progress)
+        if self._progress_pct:
+            self._progress_pct.config(text=f"{int(progress)}%")
+
+    # ------------------------------------------------------------------
+    # Dialogs
+    # ------------------------------------------------------------------
 
     def show_error(self, title: str, message: str) -> None:
         """Show an error message box.

@@ -49,13 +49,13 @@ jobs:
           --icon=icon.ico
           --add-data "icon.ico;."
           --add-data "icon.png;."
-          --name "Shift Automator Pro"
+          --name "ShiftPress"
           main.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ShiftAutomatorPro-v${{ inputs.version }}
+          name: ShiftPress-v${{ inputs.version }}
           path: dist/*.exe
           retention-days: 90
 

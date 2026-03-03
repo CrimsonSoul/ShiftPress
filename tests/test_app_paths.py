@@ -45,7 +45,7 @@ class TestGetDataDir:
             assert str(result) == f"/mock/home/{APP_DIRNAME}"
 
     def test_non_windows(self):
-        """Should use ~/.shift-automator-pro on non-Windows."""
+        """Should use ~/.shiftpress on non-Windows."""
 
         class _MockPath(PurePosixPath):
             @classmethod
@@ -56,7 +56,7 @@ class TestGetDataDir:
             "src.app_paths.Path", _MockPath
         ):
             result = get_data_dir()
-            assert str(result) == "/home/testuser/.shift-automator-pro"
+            assert str(result) == "/home/testuser/.shiftpress"
 
     def test_returns_path_object(self):
         """Should always return a Path-like object."""

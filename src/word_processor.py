@@ -1,5 +1,5 @@
 """
-Word document processing for Shift Automator application.
+Word document processing for ShiftPress application.
 
 This module handles all interactions with Microsoft Word via COM automation,
 including document opening, date replacement, and printing.
@@ -29,12 +29,6 @@ from .constants import (
     CLOSE_NO_SAVE,
     COM_RETRIES,
     COM_RETRY_DELAY,
-    WD_PRIMARY_HEADER_STORY,
-    WD_EVEN_PAGES_HEADER_STORY,
-    WD_PRIMARY_FOOTER_STORY,
-    WD_EVEN_PAGES_FOOTER_STORY,
-    WD_FIRST_PAGE_HEADER_STORY,
-    WD_FIRST_PAGE_FOOTER_STORY,
     WD_FIND_CONTINUE,
     WD_REPLACE_ALL,
 )
@@ -379,7 +373,6 @@ class WordProcessor:
         template_name: str,
         current_date: date,
         printer_name: str,
-        headers_footers_only: bool = False,
     ) -> tuple[bool, Optional[str]]:
         """
         Open, update dates, and print a Word document.
@@ -389,7 +382,6 @@ class WordProcessor:
             template_name: The name of the template file
             current_date: The date to use for replacements
             printer_name: The printer to use
-            headers_footers_only: If True, only replace dates in headers/footers
 
         Returns:
             tuple of (success, error_message)
@@ -440,9 +432,7 @@ class WordProcessor:
                         )
 
             # Replace dates
-            self.replace_dates(
-                doc, current_date, headers_footers_only=headers_footers_only
-            )
+            self.replace_dates(doc, current_date)
 
             # Set printer and print
             if self.word_app:
@@ -476,31 +466,16 @@ class WordProcessor:
                 except Exception as e:
                     logger.warning(f"Error closing document: {e}")
 
-    def replace_dates(
-        self, doc: Any, current_date: date, headers_footers_only: bool = False
-    ) -> None:
+    def replace_dates(self, doc: Any, current_date: date) -> None:
         """
         Replace date placeholders in the document using regex patterns.
 
         Args:
             doc: The Word document object
             current_date: The date to use for replacements
-            headers_footers_only: If True, restrict replacements to
-                header/footer story ranges only.
         """
-        allowed_story_types: Optional[set[int]] = None
-        if headers_footers_only:
-            allowed_story_types = {
-                WD_PRIMARY_HEADER_STORY,
-                WD_EVEN_PAGES_HEADER_STORY,
-                WD_FIRST_PAGE_HEADER_STORY,
-                WD_PRIMARY_FOOTER_STORY,
-                WD_EVEN_PAGES_FOOTER_STORY,
-                WD_FIRST_PAGE_FOOTER_STORY,
-            }
-
         # Normalize non-breaking spaces before running patterns
-        self._normalize_spaces_in_doc(doc, allowed_story_types=allowed_story_types)
+        self._normalize_spaces_in_doc(doc)
 
         # Format date components using locale-independent English names.
         # strftime("%A") / strftime("%B") return locale-dependent strings
@@ -564,9 +539,7 @@ class WordProcessor:
 
         any_matched = False
         for find_text, replace_text in patterns:
-            if self._execute_replace(
-                doc, find_text, replace_text, allowed_story_types=allowed_story_types
-            ):
+            if self._execute_replace(doc, find_text, replace_text):
                 any_matched = True
 
         if not any_matched:
@@ -586,9 +559,7 @@ class WordProcessor:
 
         logger.debug(f"Date replacements completed for {current_date}")
 
-    def _normalize_spaces_in_doc(
-        self, doc: Any, allowed_story_types: Optional[set[int]] = None
-    ) -> None:
+    def _normalize_spaces_in_doc(self, doc: Any) -> None:
         """Normalize invisible characters that break wildcard matching.
 
         Word templates frequently contain non-breaking spaces (U+00A0),
@@ -600,8 +571,6 @@ class WordProcessor:
 
         Args:
             doc: The Word document object.
-            allowed_story_types: Optional set of Word StoryType constants to
-                restrict the scope of replacement.
         """
         # Each tuple is (FindText, ReplaceWith, description).
         # ^s   = non-breaking space (U+00A0) — replace with regular space
@@ -627,9 +596,7 @@ class WordProcessor:
 
         for find_code, replace_with, desc in normalizations:
             try:
-                for story in self._iter_story_ranges(
-                    doc, allowed_story_types=allowed_story_types
-                ):
+                for story in self._iter_story_ranges(doc):
                     f = story.Find
                     f.ClearFormatting()
                     f.Replacement.ClearFormatting()
@@ -640,7 +607,7 @@ class WordProcessor:
                         False,  # MatchWildcards (must be False for ^codes)
                         False,  # MatchSoundsLike
                         False,  # MatchAllWordForms
-                        True,   # Forward
+                        True,  # Forward
                         WD_FIND_CONTINUE,  # Wrap
                         False,  # Format
                         replace_with,
@@ -654,7 +621,6 @@ class WordProcessor:
         doc: Any,
         find_text: str,
         replace_text: str,
-        allowed_story_types: Optional[set[int]] = None,
     ) -> bool:
         """
         Execute a find and replace operation across all story ranges.
@@ -663,32 +629,24 @@ class WordProcessor:
             doc: The Word document object
             find_text: The text pattern to find
             replace_text: The replacement text
-            allowed_story_types: Optional set of Word StoryType constants to
-                restrict which story ranges are searched.
 
         Returns:
             True if at least one replacement was made
         """
         any_replaced = False
         try:
-            for story in self._iter_story_ranges(
-                doc, allowed_story_types=allowed_story_types
-            ):
+            for story in self._iter_story_ranges(doc):
                 if self._run_find_replace(story, find_text, replace_text):
                     any_replaced = True
         except Exception as e:
             logger.warning(f"Error during find/replace: {e}")
         return any_replaced
 
-    def _iter_story_ranges(
-        self, doc: Any, allowed_story_types: Optional[set[int]] = None
-    ) -> Iterator[Any]:
-        """Iterate all story ranges, optionally filtering by StoryType.
+    def _iter_story_ranges(self, doc: Any) -> Iterator[Any]:
+        """Iterate all story ranges in a document.
 
         Args:
             doc: The Word document object.
-            allowed_story_types: If provided, only yield ranges whose
-                ``StoryType`` is in this set.
 
         Yields:
             Word Range objects from the document's StoryRanges collection.
@@ -699,9 +657,7 @@ class WordProcessor:
                 # Include this story and its linked NextStoryRange chain
                 cur = story
                 while cur:
-                    stype = getattr(cur, "StoryType", None)
-                    if allowed_story_types is None or stype in allowed_story_types:
-                        yield cur
+                    yield cur
                     cur = getattr(cur, "NextStoryRange", None)
         except Exception as e:
             logger.warning(f"Error iterating story ranges: {e}")

@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 
-APP_DIRNAME = "Shift Automator Pro"
+APP_DIRNAME = "ShiftPress"
 
 
 def get_data_dir() -> Path:
@@ -19,8 +19,8 @@ def get_data_dir() -> Path:
     The directory is *not* created by this function; callers are responsible
     for calling ``mkdir()`` if needed.
 
-    Windows: %APPDATA%\\Shift Automator Pro (fallback to %LOCALAPPDATA%)
-    Other OSes (dev/test): ~/.shift-automator-pro
+    Windows: %APPDATA%\\ShiftPress (fallback to %LOCALAPPDATA%)
+    Other OSes (dev/test): ~/.shiftpress
 
     Returns:
         Path to the per-user data directory.
@@ -33,4 +33,4 @@ def get_data_dir() -> Path:
         return Path.home() / APP_DIRNAME
 
     # Non-Windows environments are primarily for development/tests.
-    return Path.home() / ".shift-automator-pro"
+    return Path.home() / ".shiftpress"

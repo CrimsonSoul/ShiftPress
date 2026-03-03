@@ -1,5 +1,5 @@
 """
-Configuration management for Shift Automator application.
+Configuration management for ShiftPress application.
 
 This module handles loading, saving, and validating configuration settings.
 """
@@ -27,14 +27,13 @@ class AppConfig:
     day_folder: str = ""
     night_folder: str = ""
     printer_name: str = ""
-    headers_footers_only: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary.
 
         Returns:
             Dict with keys ``day_folder``, ``night_folder``,
-            ``printer_name``, and ``headers_footers_only``.
+            and ``printer_name``.
         """
         return asdict(self)
 
@@ -53,7 +52,6 @@ class AppConfig:
             day_folder=str(data.get("day_folder", "") or ""),
             night_folder=str(data.get("night_folder", "") or ""),
             printer_name=str(data.get("printer_name", "") or ""),
-            headers_footers_only=bool(data.get("headers_footers_only", False)),
         )
 
 

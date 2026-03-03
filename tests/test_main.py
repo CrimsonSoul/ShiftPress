@@ -11,17 +11,17 @@ import pytest
 
 # Import the class directly, then grab the actual module from sys.modules
 # (src.main as a name is shadowed by the main() function exported in src.__init__.py)
-from src.main import ShiftAutomatorApp, _compute_batch_size
+from src.main import ShiftPressApp, _compute_batch_size
 
 main_module = sys.modules["src.main"]
 
 
-class TestShiftAutomatorApp:
-    """Tests for ShiftAutomatorApp class."""
+class TestShiftPressApp:
+    """Tests for ShiftPressApp class."""
 
     @pytest.fixture
     def app(self):
-        """Create a ShiftAutomatorApp with mocked UI and dependencies."""
+        """Create a ShiftPressApp with mocked UI and dependencies."""
         with patch.object(main_module, "ScheduleAppUI") as MockUI, patch.object(
             main_module, "ConfigManager"
         ) as MockConfig:
@@ -33,7 +33,6 @@ class TestShiftAutomatorApp:
             mock_ui.get_available_printers.return_value = ["Test Printer"]
             mock_ui.get_start_date.return_value = date(2026, 1, 14)
             mock_ui.get_end_date.return_value = date(2026, 1, 14)
-            mock_ui.get_headers_footers_only.return_value = False
             mock_ui.progress_var = MagicMock()
             mock_ui.progress_var.get.return_value = 0.0
             mock_ui.print_btn = MagicMock()
@@ -43,7 +42,7 @@ class TestShiftAutomatorApp:
                 day_folder="", night_folder="", printer_name=""
             )
 
-            app = ShiftAutomatorApp(mock_root)
+            app = ShiftPressApp(mock_root)
             yield app
 
     def test_validate_inputs_missing_day_folder(self, app):
@@ -356,7 +355,6 @@ class TestShiftAutomatorApp:
             day_folder="/saved/day",
             night_folder="/saved/night",
             printer_name="Saved Printer",
-            headers_footers_only=True,
         )
         app.config_manager.load.return_value = mock_config
 
@@ -364,14 +362,12 @@ class TestShiftAutomatorApp:
         app.ui.day_entry = MagicMock()
         app.ui.night_entry = MagicMock()
         app.ui.printer_var = MagicMock()
-        app.ui.headers_only_var = MagicMock()
 
         app._load_config()
 
         app.ui.day_entry.insert.assert_called_with(0, "/saved/day")
         app.ui.night_entry.insert.assert_called_with(0, "/saved/night")
         app.ui.printer_var.set.assert_called_with("Saved Printer")
-        app.ui.headers_only_var.set.assert_called_with(True)
 
     def test_load_config_exception_shows_warning(self, app):
         """_load_config should show warning on load failure."""
@@ -441,34 +437,6 @@ class TestShiftAutomatorApp:
         # Print button should be re-enabled
         app.ui.set_print_button_state.assert_called_with("normal")
 
-    @patch.object(main_module, "WordProcessor")
-    @patch.object(main_module, "validate_folder_path", return_value=(True, None))
-    def test_process_batch_propagates_headers_footers_only(
-        self, mock_validate, mock_wp_class, app
-    ):
-        """_process_batch should forward headers_footers_only to print_document."""
-        mock_wp = MagicMock()
-        mock_wp.print_document.return_value = (True, None)
-        mock_wp.__enter__ = MagicMock(return_value=mock_wp)
-        mock_wp.__exit__ = MagicMock(return_value=False)
-        mock_wp_class.return_value = mock_wp
-
-        params = {
-            "start_date": date(2026, 1, 14),
-            "end_date": date(2026, 1, 14),
-            "day_folder": "/tmp/day",
-            "night_folder": "/tmp/night",
-            "printer_name": "Test Printer",
-            "headers_footers_only": True,
-        }
-
-        app._process_batch(params)
-
-        # Both calls (day + night) should pass headers_footers_only=True
-        assert mock_wp.print_document.call_count == 2
-        for call in mock_wp.print_document.call_args_list:
-            assert call.kwargs.get("headers_footers_only") is True
-
     def test_write_failure_report_exception_returns_none(self, app, tmp_path):
         """_write_failure_report should return None when writing fails."""
         failures = [
@@ -484,7 +452,6 @@ class TestShiftAutomatorApp:
             result = app._write_failure_report(failures)
 
         assert result is None
-
 
     def test_start_processing_batch_params_strip_quotes(self, app):
         """start_processing should strip surrounding quotes from folder paths in batch_params."""

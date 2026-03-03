@@ -1,6 +1,6 @@
-# Shift Automator Pro
+# ShiftPress
 
-Shift Automator Pro is a Windows desktop app that automates weekly schedule-template printing through Microsoft Word COM automation.
+ShiftPress is a Windows desktop app that batch-prints shift schedule templates via Microsoft Word COM automation.
 
 ![Platform](https://img.shields.io/badge/platform-Windows-0a7ea4) ![Language](https://img.shields.io/badge/language-Python%203.12-2ea043) ![UI](https://img.shields.io/badge/ui-Tkinter%2Fttk-4b5563) ![Automation](https://img.shields.io/badge/automation-Word%20COM-1f6feb)
 
@@ -31,7 +31,7 @@ Shift Automator Pro is a Windows desktop app that automates weekly schedule-temp
 - `src/ui.py` — Tkinter/ttk interface layer
 - `src/word_processor.py` — Word COM automation lifecycle (open, replace, print, close)
 - `src/scheduler.py` — date resolution and template path logic
-- `src/config.py` — config management with migration support
+- `src/config.py` — config management
 - `src/path_validation.py` — path traversal and filename safety checks
 
 ## Tech Stack

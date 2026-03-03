@@ -1,5 +1,5 @@
 """
-Constants for Shift Automator application.
+Constants for ShiftPress application.
 
 This module contains all named constants used throughout the application
 to avoid magic numbers and strings.
@@ -81,7 +81,9 @@ CLOSE_PROMPT: Final = -2  # wdPromptToSaveChanges
 
 # Windows printer enumeration constants (win32print flags)
 PRINTER_ENUM_LOCAL: Final = 2  # PRINTER_ENUM_LOCAL
-PRINTER_ENUM_CONNECTIONS: Final = 4  # PRINTER_ENUM_CONNECTIONS (user-connected printers)
+PRINTER_ENUM_CONNECTIONS: Final = (
+    4  # PRINTER_ENUM_CONNECTIONS (user-connected printers)
+)
 
 # UI default labels
 DEFAULT_PRINTER_LABEL: Final = "Choose Printer"
@@ -91,7 +93,7 @@ DOCX_EXTENSION: Final = ".docx"
 
 # Configuration
 CONFIG_FILENAME: Final = "config.json"
-LOG_FILENAME: Final = "shift_automator.log"
+LOG_FILENAME: Final = "shiftpress.log"
 
 # UI Constants
 WINDOW_WIDTH: Final = 640
@@ -141,16 +143,16 @@ WD_REPLACE_ALL: Final = 2  # wdReplaceAll
 class Colors:
     """Color scheme constants for the application UI."""
 
-    background: str = "#0D0D12"  # Near-black depth
-    surface: str = "#16161D"  # Modern card surface
-    accent: str = "#4D7CFF"  # Tech blue
-    text_main: str = "#FFFFFF"  # High contrast
-    text_dim: str = "#71717A"  # Muted secondary
-    success: str = "#10B981"  # Emerald
-    error: str = "#EF4444"  # Red/Danger
-    border: str = "#27272A"  # Subtle border
-    secondary: str = "#1E1E26"  # Button hover
-    accent_hover: str = "#3A6DFF"  # Accent hover state
+    background: str = "#18181B"  # Zinc-900 — warm near-black
+    surface: str = "#27272A"  # Zinc-800 — warm card surface
+    accent: str = "#F59E0B"  # Amber-500 — warm, distinctive
+    text_main: str = "#F4F4F5"  # Zinc-100 — warm off-white
+    text_dim: str = "#A1A1AA"  # Zinc-400 — readable secondary
+    success: str = "#34D399"  # Emerald-400
+    error: str = "#FB7185"  # Rose-400 — softer red
+    border: str = "#3F3F46"  # Zinc-700 — visible borders
+    secondary: str = "#323238"  # Hover states
+    accent_hover: str = "#D97706"  # Amber-600 — deeper press state
 
 
 FontSpec = Union[tuple[str, int], tuple[str, int, str]]
@@ -182,7 +184,8 @@ class Fonts:
 
     main: FontSpec = (_FONT_FAMILY, 10)
     bold: FontSpec = (_FONT_FAMILY, 10, "bold")
-    header: FontSpec = (_FONT_FAMILY, 24, "bold")
+    header: FontSpec = (_FONT_FAMILY, 20, "bold")
+    card_title: FontSpec = (_FONT_FAMILY, 11, "bold")
     sub: FontSpec = (_FONT_FAMILY, 9)
     button: FontSpec = (_FONT_FAMILY, 11, "bold")
 

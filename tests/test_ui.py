@@ -54,8 +54,8 @@ class TestScheduleAppUI:
             ui.print_btn = MagicMock()
             ui.status_label = MagicMock()
             ui.progress_var = MagicMock()
+            ui._progress_pct = MagicMock()
             ui.printer_var = MagicMock()
-            ui.headers_only_var = MagicMock()
             yield ui
 
     def test_init(self, ui):
@@ -121,8 +121,3 @@ class TestScheduleAppUI:
         # Verify Escape was bound (check bind call args for "<Escape>")
         bound_keys = [call[0][0] for call in ui.root.bind.call_args_list]
         assert "<Escape>" in bound_keys
-
-    def test_get_headers_footers_only(self, ui):
-        """Should return boolean from headers-only var."""
-        ui.headers_only_var.get.return_value = True
-        assert ui.get_headers_footers_only() is True

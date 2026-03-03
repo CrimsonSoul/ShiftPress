@@ -184,7 +184,6 @@ class TestSanitizeFilename:
         result = sanitize_filename("...")
         assert result == "_unnamed"
 
-
     def test_reserved_device_name_con(self):
         """Windows reserved name CON should be prefixed."""
         result = sanitize_filename("CON.docx")

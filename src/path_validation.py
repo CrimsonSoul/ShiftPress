@@ -1,5 +1,5 @@
 """
-Path validation and safety utilities for Shift Automator application.
+Path validation and safety utilities for ShiftPress application.
 
 This module provides functions to validate and sanitize file paths to prevent
 security issues like path traversal attacks.
@@ -114,11 +114,16 @@ def validate_file_path(
 
 
 # Windows reserved device names that cannot be used as filenames.
-_WINDOWS_RESERVED_NAMES = frozenset({
-    "CON", "PRN", "AUX", "NUL",
-    *(f"COM{i}" for i in range(1, 10)),
-    *(f"LPT{i}" for i in range(1, 10)),
-})
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
+)
 
 # Single-pass translation table for dangerous characters.
 _DANGEROUS_CHAR_TABLE = str.maketrans({c: "_" for c in '/\\:*?"<>|'})
