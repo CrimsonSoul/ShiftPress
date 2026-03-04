@@ -51,7 +51,6 @@ jobs:
 
   build:
     if: github.event_name == 'workflow_dispatch'
-    needs: quality
     runs-on: windows-latest
 
     steps:
