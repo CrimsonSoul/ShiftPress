@@ -96,8 +96,8 @@ CONFIG_FILENAME: Final = "config.json"
 LOG_FILENAME: Final = "shiftpress.log"
 
 # UI Constants
-WINDOW_WIDTH: Final = 980
-WINDOW_HEIGHT: Final = 820
+WINDOW_WIDTH: Final = 1040
+WINDOW_HEIGHT: Final = 860
 WINDOW_RESIZABLE: Final = True
 
 # Progress bar
@@ -143,17 +143,20 @@ WD_REPLACE_ALL: Final = 2  # wdReplaceAll
 class Colors:
     """Color scheme constants for the application UI."""
 
-    background: str = "#18181B"  # Zinc-900 — warm near-black
-    surface: str = "#27272A"  # Zinc-800 — warm card surface
-    accent: str = "#F59E0B"  # Amber-500 — warm, distinctive
+    background: str = "#16171A"  # Window charcoal
+    surface: str = "#24262A"  # Raised graphite work surface
+    input: str = "#1B1C20"  # Recessed native input surface
+    accent: str = "#F2B340"  # Press amber
     day_accent: str = "#38BDF8"  # Sky-400 — Day shift identity
+    action: str = "#1267C9"  # Saturated print-action blue
+    action_hover: str = "#0F56A8"  # Deeper action blue
     text_main: str = "#F4F4F5"  # Zinc-100 — warm off-white
-    text_dim: str = "#A1A1AA"  # Zinc-400 — readable secondary
-    success: str = "#34D399"  # Emerald-400
+    text_dim: str = "#B5B7BD"  # High-contrast supporting text
+    success: str = "#4ADE80"  # Emerald-400
     error: str = "#FB7185"  # Rose-400 — softer red
-    border: str = "#3F3F46"  # Zinc-700 — visible borders
-    secondary: str = "#323238"  # Hover states
-    accent_hover: str = "#D97706"  # Amber-600 — deeper press state
+    border: str = "#5A5D64"  # Divider steel
+    secondary: str = "#303238"  # Secondary controls and hover states
+    accent_hover: str = "#D99A25"  # Deeper amber press state
 
 
 FontSpec = Union[tuple[str, int], tuple[str, int, str]]
@@ -183,12 +186,12 @@ _FONT_FAMILY: Final = _font_family()
 class Fonts:
     """Font configuration for the application UI."""
 
-    main: FontSpec = (_FONT_FAMILY, 10)
-    bold: FontSpec = (_FONT_FAMILY, 10, "bold")
-    header: FontSpec = (_FONT_FAMILY, 20, "bold")
-    card_title: FontSpec = (_FONT_FAMILY, 11, "bold")
-    sub: FontSpec = (_FONT_FAMILY, 9)
-    button: FontSpec = (_FONT_FAMILY, 11, "bold")
+    main: FontSpec = (_FONT_FAMILY, 11)
+    bold: FontSpec = (_FONT_FAMILY, 11, "bold")
+    header: FontSpec = (_FONT_FAMILY, 24, "bold")
+    card_title: FontSpec = (_FONT_FAMILY, 13, "bold")
+    sub: FontSpec = (_FONT_FAMILY, 10)
+    button: FontSpec = (_FONT_FAMILY, 14, "bold")
 
 
 # Global color and font instances

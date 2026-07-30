@@ -569,12 +569,14 @@ class TestShiftPressApp:
         app.ui.day_entry = MagicMock()
         app.ui.night_entry = MagicMock()
         app.ui.printer_var = MagicMock()
+        app.ui.refresh_setup_summary.reset_mock()
 
         app._load_config()
 
         app.ui.day_entry.insert.assert_called_with(0, "/saved/day")
         app.ui.night_entry.insert.assert_called_with(0, "/saved/night")
         app.ui.printer_var.set.assert_called_with("Saved Printer")
+        app.ui.refresh_setup_summary.assert_called_once()
 
     def test_load_config_exception_shows_warning(self, app):
         """_load_config should show warning on load failure."""
@@ -642,7 +644,7 @@ class TestShiftPressApp:
         app.ui.set_inputs_enabled.assert_called_with(True)
         # Print button should be re-enabled
         app.ui.set_print_button_state.assert_called_with("normal")
-        app.ui.refresh_manifest_preview.assert_called()
+        app.ui.set_processing_mode.assert_called_with(False)
 
     @patch.object(main_module, "WordProcessor")
     def test_process_batch_saves_configuration_and_consumes_preflight_cache(

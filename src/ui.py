@@ -71,6 +71,7 @@ class _ShiftPanelWidgets:
     range_end_picker: Any
     single_wrap: ttk.Frame
     range_wrap: ttk.Frame
+    count_label: ttk.Label
 
 
 def _get_version() -> str:
@@ -221,6 +222,11 @@ class ScheduleAppUI:
         self.day_entry: Optional[ttk.Entry] = None
         self.night_entry: Optional[ttk.Entry] = None
         self.printer_var: Optional[tk.StringVar] = None
+        self.setup_summary_label: Optional[ttk.Label] = None
+        self._setup_details: Optional[ttk.Frame] = None
+        self._setup_toggle_btn: Optional[ttk.Button] = None
+        self._setup_expanded = False
+        self.manifest_title_label: Optional[ttk.Label] = None
         self.manifest_label: Optional[ttk.Label] = None
         self.status_label: Optional[ttk.Label] = None
         self.progress_var: Optional[tk.DoubleVar] = None
@@ -228,7 +234,7 @@ class ScheduleAppUI:
         self._progress_pct: Optional[ttk.Label] = None
         self.printer_dropdown: Optional[ttk.OptionMenu] = None
         self._refresh_btn: Optional[ttk.Button] = None
-        self.print_btn: Optional[tk.Button] = None
+        self.print_btn: Optional[ttk.Button] = None
         self._browse_buttons: list[ttk.Button] = []
         self._shift_panels: dict[ShiftType, _ShiftPanelWidgets] = {}
 
@@ -256,11 +262,24 @@ class ScheduleAppUI:
             foreground=COLORS.text_main,
             font=FONTS.main,
         )
+        self.style.configure("Card.TFrame", background=COLORS.surface)
+        self.style.configure(
+            "Card.TLabel",
+            background=COLORS.surface,
+            foreground=COLORS.text_main,
+            font=FONTS.main,
+        )
+        self.style.configure(
+            "CardSub.TLabel",
+            background=COLORS.surface,
+            foreground=COLORS.text_dim,
+            font=FONTS.sub,
+        )
 
         # Card frames (LabelFrame)
         self.style.configure(
             "TLabelframe",
-            background=COLORS.background,
+            background=COLORS.surface,
             foreground=COLORS.accent,
             bordercolor=COLORS.border,
             borderwidth=1,
@@ -273,7 +292,7 @@ class ScheduleAppUI:
         )
         self.style.configure(
             "Night.TLabelframe",
-            background=COLORS.background,
+            background=COLORS.surface,
             bordercolor=COLORS.accent,
             borderwidth=1,
         )
@@ -285,7 +304,7 @@ class ScheduleAppUI:
         )
         self.style.configure(
             "Day.TLabelframe",
-            background=COLORS.background,
+            background=COLORS.surface,
             bordercolor=COLORS.day_accent,
             borderwidth=1,
         )
@@ -299,27 +318,51 @@ class ScheduleAppUI:
         # Inputs
         self.style.configure(
             "TEntry",
-            fieldbackground=COLORS.surface,
+            fieldbackground=COLORS.input,
             foreground=COLORS.text_main,
             insertcolor=COLORS.text_main,
             selectbackground=COLORS.accent,
             selectforeground=COLORS.text_main,
-            borderwidth=0,
+            bordercolor=COLORS.border,
+            borderwidth=1,
+            padding=(8, 7),
         )
         self.style.map(
             "TEntry",
             fieldbackground=[("disabled", COLORS.border)],
             foreground=[("disabled", COLORS.text_dim)],
         )
+        # DateEntry copies TCombobox into its own arrow-bearing style.
+        self.style.configure(
+            "TCombobox",
+            fieldbackground=COLORS.input,
+            background=COLORS.secondary,
+            foreground=COLORS.text_main,
+            arrowcolor=COLORS.text_main,
+            bordercolor=COLORS.border,
+            lightcolor=COLORS.border,
+            darkcolor=COLORS.border,
+            padding=(8, 7),
+        )
+        self.style.map(
+            "TCombobox",
+            fieldbackground=[
+                ("readonly", COLORS.input),
+                ("disabled", COLORS.surface),
+            ],
+            foreground=[("disabled", COLORS.text_dim)],
+            arrowcolor=[("disabled", COLORS.text_dim)],
+        )
 
         # Buttons
         self.style.configure(
             "TButton",
-            background=COLORS.surface,
+            background=COLORS.secondary,
             foreground=COLORS.text_main,
-            borderwidth=0,
+            bordercolor=COLORS.border,
+            borderwidth=1,
             font=FONTS.bold,
-            padding=(12, 6),
+            padding=(14, 8),
         )
         self.style.map(
             "TButton",
@@ -330,13 +373,54 @@ class ScheduleAppUI:
             ],
             foreground=[("disabled", COLORS.text_dim)],
         )
+        self.style.configure(
+            "Primary.TButton",
+            background=COLORS.action,
+            foreground=COLORS.text_main,
+            bordercolor=COLORS.day_accent,
+            borderwidth=1,
+            font=FONTS.button,
+            padding=(26, 16),
+        )
+        self.style.map(
+            "Primary.TButton",
+            background=[
+                ("disabled", COLORS.border),
+                ("pressed", COLORS.action_hover),
+                ("active", COLORS.action_hover),
+            ],
+            foreground=[
+                ("disabled", COLORS.text_dim),
+                ("pressed", COLORS.text_main),
+                ("active", COLORS.text_main),
+            ],
+        )
+        self.style.configure(
+            "Danger.TButton",
+            background=COLORS.error,
+            foreground=COLORS.background,
+            bordercolor=COLORS.error,
+            borderwidth=1,
+            font=FONTS.button,
+            padding=(26, 16),
+        )
+        self.style.map(
+            "Danger.TButton",
+            background=[
+                ("disabled", COLORS.border),
+                ("pressed", "#E25D72"),
+                ("active", "#E25D72"),
+            ],
+            foreground=[("disabled", COLORS.text_dim)],
+        )
 
         # Progress bar
         self.style.configure(
             "Horizontal.TProgressbar",
-            thickness=8,
-            troughcolor=COLORS.border,
-            background=COLORS.accent,
+            thickness=12,
+            troughcolor=COLORS.input,
+            background=COLORS.success,
+            bordercolor=COLORS.border,
         )
 
         # Specialized Labels
@@ -351,6 +435,24 @@ class ScheduleAppUI:
             font=FONTS.sub,
             foreground=COLORS.text_dim,
             background=COLORS.background,
+        )
+        self.style.configure(
+            "ManifestTitle.TLabel",
+            font=FONTS.card_title,
+            foreground=COLORS.text_main,
+            background=COLORS.surface,
+        )
+        self.style.configure(
+            "NightCount.TLabel",
+            font=FONTS.bold,
+            foreground=COLORS.success,
+            background=COLORS.surface,
+        )
+        self.style.configure(
+            "DayCount.TLabel",
+            font=FONTS.bold,
+            foreground=COLORS.success,
+            background=COLORS.surface,
         )
 
         # Status labels (success / error variants)
@@ -390,11 +492,37 @@ class ScheduleAppUI:
             background=[("active", COLORS.background)],
             foreground=[("disabled", COLORS.text_dim)],
         )
+        self.style.configure(
+            "Card.TCheckbutton",
+            background=COLORS.surface,
+            foreground=COLORS.text_main,
+            font=FONTS.bold,
+        )
+        self.style.map(
+            "Card.TCheckbutton",
+            background=[("active", COLORS.surface)],
+            foreground=[("disabled", COLORS.text_dim)],
+        )
+        self.style.configure(
+            "Card.TRadiobutton",
+            background=COLORS.surface,
+            foreground=COLORS.text_main,
+            font=FONTS.main,
+        )
+        self.style.map(
+            "Card.TRadiobutton",
+            background=[("active", COLORS.surface)],
+            foreground=[("disabled", COLORS.text_dim)],
+        )
+        self.style.configure(
+            "Card.TSeparator",
+            background=COLORS.border,
+        )
 
         # OptionMenu (printer dropdown)
         self.style.configure(
             "TMenubutton",
-            background=COLORS.surface,
+            background=COLORS.input,
             foreground=COLORS.text_main,
             borderwidth=0,
             font=FONTS.main,
@@ -508,37 +636,97 @@ class ScheduleAppUI:
     def _create_header(self, parent: ttk.Frame) -> None:
         """Create the header section."""
         header_row = ttk.Frame(parent)
-        header_row.pack(fill="x", pady=(0, 24))
+        header_row.pack(fill="x", pady=(0, 20))
 
-        # Title row: app name + version badge
         title_row = ttk.Frame(header_row)
         title_row.pack(fill="x")
-        ttk.Label(title_row, text="ShiftPress", style="Header.TLabel").pack(side="left")
+        ttk.Label(
+            title_row,
+            text="Prepare print run",
+            style="Header.TLabel",
+        ).pack(side="left")
         version = _get_version()
         if version:
             ttk.Label(
                 title_row,
-                text=f"v{version}",
+                text=f"ShiftPress  ·  v{version}",
                 style="Sub.TLabel",
-            ).pack(side="left", padx=(12, 0), anchor="s", pady=(0, 4))
+            ).pack(side="right", anchor="s", pady=(0, 5))
 
         ttk.Label(
             header_row,
-            text="Batch print shift schedules",
+            text="Choose exactly which schedules go to print.",
             style="Sub.TLabel",
-        ).pack(anchor="w", pady=(4, 0))
+        ).pack(anchor="w", pady=(6, 0))
 
     def _create_setup_card(self, parent: ttk.Frame) -> None:
-        """Create compact template and printer setup controls."""
-        card = ttk.LabelFrame(parent, text=" Setup ", padding="16")
+        """Create a summarized setup card with on-demand configuration."""
+        card = ttk.LabelFrame(parent, text=" Setup ", padding="18")
         card.pack(fill="x", pady=(0, 16))
 
-        self.day_entry = self._create_path_row(card, "Day Templates", "")
-        self.night_entry = self._create_path_row(card, "Night Templates", "")
+        summary_row = ttk.Frame(card, style="Card.TFrame")
+        summary_row.pack(fill="x")
+        self.setup_summary_label = ttk.Label(
+            summary_row,
+            text="Template folders not configured\nChoose a printer",
+            style="Card.TLabel",
+            justify="left",
+        )
+        self.setup_summary_label.pack(side="left", anchor="w")
+        self._setup_toggle_btn = ttk.Button(
+            summary_row,
+            text="Change…",
+            command=self._toggle_setup_details,
+            width=12,
+        )
+        self._setup_toggle_btn.pack(side="right", padx=(18, 0))
+
+        self._setup_details = ttk.Frame(card, style="Card.TFrame")
+
+        self.day_entry = self._create_path_row(self._setup_details, "Day Templates", "")
+        self.night_entry = self._create_path_row(
+            self._setup_details, "Night Templates", ""
+        )
 
         _setup_placeholder(self.day_entry, _PATH_PLACEHOLDER)
         _setup_placeholder(self.night_entry, _PATH_PLACEHOLDER)
-        self._create_printer_row(card)
+        self._create_printer_row(self._setup_details)
+        self.refresh_setup_summary()
+
+    def _toggle_setup_details(self) -> None:
+        """Show or hide setup controls without changing their values."""
+        if self._setup_details is None:
+            return
+        self._setup_expanded = not self._setup_expanded
+        if self._setup_expanded:
+            self._setup_details.pack(fill="x", pady=(18, 0))
+            if self._setup_toggle_btn is not None:
+                self._setup_toggle_btn.config(text="Done")
+        else:
+            self._setup_details.pack_forget()
+            if self._setup_toggle_btn is not None:
+                self._setup_toggle_btn.config(text="Change…")
+            self.refresh_setup_summary()
+
+    def refresh_setup_summary(self) -> None:
+        """Summarize configured templates and printer without exposing paths."""
+        if self.setup_summary_label is None:
+            return
+        day_configured = bool(self.get_day_folder())
+        night_configured = bool(self.get_night_folder())
+        if day_configured and night_configured:
+            template_status = "Templates configured"
+        elif day_configured or night_configured:
+            template_status = "Template folders incomplete"
+        else:
+            template_status = "Template folders not configured"
+        printer = self.get_printer_name()
+        printer_status = (
+            printer
+            if printer and printer != DEFAULT_PRINTER_LABEL
+            else "Choose a printer"
+        )
+        self.setup_summary_label.config(text=f"{template_status}\n{printer_status}")
 
     def _create_shift_selection_row(self, parent: ttk.Frame) -> None:
         """Create equal-width Night and Day selection panels."""
@@ -604,7 +792,7 @@ class ScheduleAppUI:
         card = ttk.LabelFrame(
             parent,
             text=f" {label} ",
-            padding="16",
+            padding="22",
             style=style_name,
         )
         card.grid(row=0, column=column, sticky="nsew", padx=horizontal_padding)
@@ -620,53 +808,57 @@ class ScheduleAppUI:
             text=f"Include {label} schedule",
             variable=enabled_var,
             command=sync_panel,
+            style="Card.TCheckbutton",
         )
-        include_check.pack(anchor="w", pady=(0, 12))
+        include_check.pack(anchor="w", pady=(0, 18))
 
-        mode_row = ttk.Frame(card)
-        mode_row.pack(fill="x", pady=(0, 12))
+        mode_row = ttk.Frame(card, style="Card.TFrame")
+        mode_row.pack(fill="x", pady=(0, 18))
         single_radio = ttk.Radiobutton(
             mode_row,
             text="Single date",
             variable=mode_var,
             value="single",
             command=sync_panel,
+            style="Card.TRadiobutton",
         )
-        single_radio.pack(side="left")
+        single_radio.pack(anchor="w", pady=(0, 10))
         range_radio = ttk.Radiobutton(
             mode_row,
             text="Date range",
             variable=mode_var,
             value="range",
             command=sync_panel,
+            style="Card.TRadiobutton",
         )
-        range_radio.pack(side="left", padx=(18, 0))
+        range_radio.pack(anchor="w")
 
-        date_stack = ttk.Frame(card)
+        date_stack = ttk.Frame(card, style="Card.TFrame")
         date_stack.pack(fill="x")
         date_stack.grid_columnconfigure(0, weight=1)
 
-        single_wrap = ttk.Frame(date_stack)
+        single_wrap = ttk.Frame(date_stack, style="Card.TFrame")
         single_wrap.grid(row=0, column=0, sticky="ew")
-        ttk.Label(single_wrap, text="Date", style="Sub.TLabel").pack(
-            anchor="w", pady=(0, 6)
+        single_wrap.grid_columnconfigure(1, weight=1)
+        ttk.Label(single_wrap, text="Date:", style="Card.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(0, 14)
         )
         single_picker = self._create_date_entry(
             date_entry_cls,
             single_wrap,
             calendar_kw=self._calendar_kwargs(),
         )
-        single_picker.pack(fill="x")
+        single_picker.grid(row=0, column=1, sticky="ew")
         single_picker.set_date(default_date)
 
-        range_wrap = ttk.Frame(date_stack)
+        range_wrap = ttk.Frame(date_stack, style="Card.TFrame")
         range_wrap.grid(row=0, column=0, sticky="ew")
         range_wrap.grid_columnconfigure(0, weight=1)
         range_wrap.grid_columnconfigure(1, weight=1)
 
-        range_start_wrap = ttk.Frame(range_wrap)
+        range_start_wrap = ttk.Frame(range_wrap, style="Card.TFrame")
         range_start_wrap.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        ttk.Label(range_start_wrap, text="Start date", style="Sub.TLabel").pack(
+        ttk.Label(range_start_wrap, text="Start date", style="CardSub.TLabel").pack(
             anchor="w", pady=(0, 6)
         )
         range_start_picker = self._create_date_entry(
@@ -677,9 +869,9 @@ class ScheduleAppUI:
         range_start_picker.pack(fill="x")
         range_start_picker.set_date(default_date)
 
-        range_end_wrap = ttk.Frame(range_wrap)
+        range_end_wrap = ttk.Frame(range_wrap, style="Card.TFrame")
         range_end_wrap.grid(row=0, column=1, sticky="ew", padx=(6, 0))
-        ttk.Label(range_end_wrap, text="End date", style="Sub.TLabel").pack(
+        ttk.Label(range_end_wrap, text="End date", style="CardSub.TLabel").pack(
             anchor="w", pady=(0, 6)
         )
         range_end_picker = self._create_date_entry(
@@ -689,6 +881,14 @@ class ScheduleAppUI:
         )
         range_end_picker.pack(fill="x")
         range_end_picker.set_date(default_date)
+
+        ttk.Separator(card, style="Card.TSeparator").pack(fill="x", pady=(20, 14))
+        count_label = ttk.Label(
+            card,
+            text="Selected · 1 document",
+            style=f"{label}Count.TLabel",
+        )
+        count_label.pack(anchor="w")
 
         panel = _ShiftPanelWidgets(
             enabled_var=enabled_var,
@@ -701,6 +901,7 @@ class ScheduleAppUI:
             range_end_picker=range_end_picker,
             single_wrap=single_wrap,
             range_wrap=range_wrap,
+            count_label=count_label,
         )
         self._shift_panels[shift_type] = panel
 
@@ -762,12 +963,18 @@ class ScheduleAppUI:
 
     def _create_manifest_card(self, parent: ttk.Frame) -> None:
         """Create the exact preflight-neutral print manifest summary."""
-        card = ttk.LabelFrame(parent, text=" Print manifest ", padding="16")
+        card = ttk.LabelFrame(parent, padding="18")
         card.pack(fill="x", pady=(0, 16))
-        self.manifest_label = ttk.Label(
+        self.manifest_title_label = ttk.Label(
             card,
             text="This run: No schedules selected",
-            style="Sub.TLabel",
+            style="ManifestTitle.TLabel",
+        )
+        self.manifest_title_label.pack(anchor="w", pady=(0, 10))
+        self.manifest_label = ttk.Label(
+            card,
+            text="Printer: Choose a printer",
+            style="CardSub.TLabel",
             justify="left",
             anchor="w",
         )
@@ -797,7 +1004,7 @@ class ScheduleAppUI:
         try:
             return date_entry_cls(
                 parent,
-                style="TEntry",
+                style="DateEntry",
                 date_pattern="mm/dd/yyyy",
                 calendar_kw=calendar_kw,
             )
@@ -808,13 +1015,17 @@ class ScheduleAppUI:
         try:
             return date_entry_cls(
                 parent,
-                style="TEntry",
+                style="DateEntry",
                 date_pattern="mm/dd/yyyy",
                 **calendar_kw,
             )
         except TypeError as e:
             logger.debug(f"DateEntry inline calendar kwargs not supported: {e}")
-            return date_entry_cls(parent, style="TEntry", date_pattern="mm/dd/yyyy")
+            return date_entry_cls(
+                parent,
+                style="DateEntry",
+                date_pattern="mm/dd/yyyy",
+            )
 
     def _auto_resize_to_content(self) -> None:
         """Expand the window once if content would be clipped."""
@@ -838,9 +1049,9 @@ class ScheduleAppUI:
 
     def _create_printer_row(self, parent: Union[ttk.Frame, ttk.LabelFrame]) -> None:
         """Create the printer selection row."""
-        output_row = ttk.Frame(parent)
-        output_row.pack(fill="x", pady=(0, 0))
-        ttk.Label(output_row, text="Printer", style="Sub.TLabel").pack(
+        output_row = ttk.Frame(parent, style="Card.TFrame")
+        output_row.pack(fill="x", pady=(8, 0))
+        ttk.Label(output_row, text="Printer", style="CardSub.TLabel").pack(
             anchor="w", pady=(0, 8)
         )
 
@@ -853,12 +1064,10 @@ class ScheduleAppUI:
 
         self.printer_var = tk.StringVar(value=DEFAULT_PRINTER_LABEL)
         try:
-            self.printer_var.trace_add(
-                "write", lambda *_args: self.refresh_manifest_preview()
-            )
+            self.printer_var.trace_add("write", self._on_printer_changed)
         except Exception as e:
             logger.debug(f"Could not watch printer selection: {e}")
-        printer_row = ttk.Frame(output_row)
+        printer_row = ttk.Frame(output_row, style="Card.TFrame")
         printer_row.pack(fill="x")
 
         self.printer_dropdown = ttk.OptionMenu(
@@ -895,17 +1104,25 @@ class ScheduleAppUI:
             if win32print is None:
                 msg = "Printing requires Windows with pywin32 installed (win32print unavailable)."
             ttk.Label(
-                output_row, text=msg, style="Sub.TLabel", foreground=COLORS.error
+                output_row,
+                text=msg,
+                style="CardSub.TLabel",
+                foreground=COLORS.error,
             ).pack(anchor="w", pady=(4, 0))
+
+    def _on_printer_changed(self, *_args: object) -> None:
+        """Refresh setup and manifest copy after the printer changes."""
+        self.refresh_setup_summary()
+        self.refresh_manifest_preview()
 
     def _create_footer(self, parent: ttk.Frame) -> None:
         """Create the action footer (status, progress, button)."""
         footer = ttk.Frame(parent)
         footer.pack(fill="x", side="bottom")
+        footer.grid_columnconfigure(0, weight=1)
 
-        # Status row: label on left, Open Logs on right
         status_wrap = ttk.Frame(footer)
-        status_wrap.pack(fill="x", pady=(0, 12))
+        status_wrap.grid(row=0, column=0, sticky="ew", padx=(0, 24))
         self.status_label = ttk.Label(
             status_wrap,
             text="Review the selected schedules",
@@ -923,9 +1140,8 @@ class ScheduleAppUI:
         open_logs_btn.pack(side="right")
         _ToolTip(open_logs_btn, "Open configuration, log, and report folder")
 
-        # Progress row: bar + percentage label
         progress_row = ttk.Frame(footer)
-        progress_row.pack(fill="x", pady=(0, 24))
+        progress_row.grid(row=1, column=0, sticky="ew", padx=(0, 24), pady=(10, 0))
 
         self.progress_var = tk.DoubleVar()
         self.progress = ttk.Progressbar(
@@ -945,21 +1161,14 @@ class ScheduleAppUI:
         )
         self._progress_pct.pack(side="right")
 
-        # Action button
-        self.print_btn = tk.Button(
+        self.print_btn = ttk.Button(
             footer,
             text="Print schedules",
-            bg=COLORS.accent,
-            fg=COLORS.text_main,
-            font=FONTS.button,
-            relief="flat",
-            pady=18,
+            style="Primary.TButton",
+            width=24,
             cursor="hand2",
-            activebackground=COLORS.accent_hover,
-            activeforeground=COLORS.text_main,
-            disabledforeground=COLORS.text_dim,
         )
-        self.print_btn.pack(fill="x")
+        self.print_btn.grid(row=0, column=1, rowspan=2, sticky="nsew")
 
     def _create_path_row(
         self, parent: Union[ttk.Frame, ttk.LabelFrame], label: str, default_val: str
@@ -975,11 +1184,13 @@ class ScheduleAppUI:
         Returns:
             The entry widget
         """
-        wrap = ttk.Frame(parent)
+        wrap = ttk.Frame(parent, style="Card.TFrame")
         wrap.pack(fill="x", pady=8)
-        ttk.Label(wrap, text=label, style="Sub.TLabel").pack(anchor="w", pady=(0, 4))
+        ttk.Label(wrap, text=label, style="CardSub.TLabel").pack(
+            anchor="w", pady=(0, 6)
+        )
 
-        row = ttk.Frame(wrap)
+        row = ttk.Frame(wrap, style="Card.TFrame")
         row.pack(fill="x")
 
         entry = ttk.Entry(row)
@@ -1016,6 +1227,7 @@ class ScheduleAppUI:
             entry.config(foreground=COLORS.text_main)
             entry.insert(0, path)
             logger.debug(f"Selected folder: {path}")
+            self.refresh_setup_summary()
 
     # ------------------------------------------------------------------
     # Public getters
@@ -1095,7 +1307,8 @@ class ScheduleAppUI:
                 f"{start_date.strftime('%m/%d/%Y')} – "
                 f"{end_date.strftime('%m/%d/%Y')}"
             )
-        return f"{selection.shift_type.title()}: {scope} ({job_count})"
+        noun = "document" if job_count == 1 else "documents"
+        return f"{selection.shift_type.title()} — {scope} — " f"{job_count} {noun}"
 
     def refresh_manifest_preview(self) -> None:
         """Refresh the preflight-neutral manifest copy and count-aware action."""
@@ -1106,19 +1319,46 @@ class ScheduleAppUI:
         try:
             manifest = build_print_manifest(selections)
             if manifest:
-                lines = [f"This run: {len(manifest)} schedules"]
+                title = f"This run: {len(manifest)} schedules"
+                lines: list[str] = []
+                row_number = 1
                 for selection in selections:
                     if not selection.enabled:
+                        self._shift_panels[selection.shift_type].count_label.config(
+                            text="Not included"
+                        )
                         continue
                     count = sum(
                         1 for job in manifest if job.shift_type == selection.shift_type
                     )
-                    lines.append(self._format_selection_summary(selection, count))
+                    lines.append(
+                        f"{row_number}. "
+                        f"{self._format_selection_summary(selection, count)}"
+                    )
+                    self._shift_panels[selection.shift_type].count_label.config(
+                        text=(
+                            f"Selected · {count} "
+                            f"{'document' if count == 1 else 'documents'}"
+                        )
+                    )
+                    row_number += 1
             else:
-                lines = ["This run: No schedules selected"]
+                title = "This run: No schedules selected"
+                lines = []
+                for selection in selections:
+                    self._shift_panels[selection.shift_type].count_label.config(
+                        text="Not included"
+                    )
         except ValueError as e:
             manifest = ()
-            lines = ["This run: Check date selection", str(e)]
+            title = "This run: Check date selection"
+            lines = [str(e)]
+            for selection in selections:
+                self._shift_panels[selection.shift_type].count_label.config(
+                    text=(
+                        "Check date selection" if selection.enabled else "Not included"
+                    )
+                )
 
         printer = self.get_printer_name()
         printer_label = (
@@ -1128,6 +1368,8 @@ class ScheduleAppUI:
         )
         lines.append(f"Printer: {printer_label}")
 
+        if self.manifest_title_label is not None:
+            self.manifest_title_label.config(text=title)
         if self.manifest_label is not None:
             self.manifest_label.config(text="\n".join(lines))
         if self.print_btn is not None:
@@ -1139,6 +1381,16 @@ class ScheduleAppUI:
             else:
                 button_text = f"Print {count} schedules"
             self.print_btn.config(text=button_text)
+
+    def set_processing_mode(self, processing: bool) -> None:
+        """Switch the primary action between print and cancellation states."""
+        if self.print_btn is None:
+            return
+        if processing:
+            self.print_btn.config(text="Cancel", style="Danger.TButton")
+        else:
+            self.print_btn.config(style="Primary.TButton")
+            self.refresh_manifest_preview()
 
     # ------------------------------------------------------------------
     # Public setters / commands
@@ -1194,6 +1446,11 @@ class ScheduleAppUI:
                 self._refresh_btn.config(state=state)
             except Exception as e:
                 logger.debug(f"Could not set refresh button state: {e}")
+        if self._setup_toggle_btn is not None:
+            try:
+                self._setup_toggle_btn.config(state=state)
+            except Exception as e:
+                logger.debug(f"Could not set setup toggle state: {e}")
         for shift_type, panel in self._shift_panels.items():
             try:
                 panel.include_check.config(state=state)

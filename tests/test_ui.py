@@ -36,6 +36,7 @@ class _FakeDateEntry:
 
     def __init__(self, *_args, **_kwargs):
         self._date = None
+        self.constructor_kwargs = _kwargs
         self.pack = MagicMock()
         self.grid = MagicMock()
         self.grid_remove = MagicMock()
@@ -72,7 +73,7 @@ class TestScheduleAppUI:
             "src.ui.ttk.Entry"
         ), patch(
             "src.ui.ttk.Button"
-        ), patch(
+        ) as MockTtkButton, patch(
             "src.ui.ttk.Checkbutton"
         ), patch(
             "src.ui.ttk.Radiobutton"
@@ -81,8 +82,10 @@ class TestScheduleAppUI:
         ), patch(
             "src.ui.ttk.Progressbar"
         ), patch(
-            "src.ui.tk.Button"
+            "src.ui.ttk.Separator"
         ), patch(
+            "src.ui.tk.Button"
+        ) as MockTkButton, patch(
             "src.ui.tk.StringVar", side_effect=_FakeVariable
         ), patch(
             "src.ui.tk.DoubleVar", side_effect=_FakeVariable
@@ -102,6 +105,8 @@ class TestScheduleAppUI:
             ui.progress_var = _FakeVariable(value=0.0)
             ui._progress_pct = MagicMock()
             ui.printer_var = _FakeVariable(value="Test Printer")
+            ui._test_ttk_button_class = MockTtkButton
+            ui._test_tk_button_class = MockTkButton
             yield ui
 
     def test_init(self, ui):
@@ -134,6 +139,16 @@ class TestScheduleAppUI:
             "single",
             date(2026, 7, 31),
         )
+
+    def test_date_pickers_keep_the_calendar_dropdown_affordance(self, ui):
+        """Date controls should use tkcalendar's arrow-bearing DateEntry style."""
+        for panel in ui._shift_panels.values():
+            for picker in (
+                panel.single_picker,
+                panel.range_start_picker,
+                panel.range_end_picker,
+            ):
+                assert picker.constructor_kwargs["style"] == "DateEntry"
 
     def test_shift_selections_keep_independent_modes_and_dates(self, ui):
         """Changing Night state must not alter the Day selection."""
@@ -196,30 +211,101 @@ class TestScheduleAppUI:
 
     def test_manifest_preview_uses_actual_selected_job_count(self, ui):
         """The visible manifest and action should reflect independent jobs."""
+        ui.manifest_title_label = MagicMock()
         ui.manifest_label = MagicMock()
         ui.print_btn = MagicMock()
 
         ui.refresh_manifest_preview()
 
+        assert (
+            ui.manifest_title_label.config.call_args.kwargs["text"]
+            == "This run: 2 schedules"
+        )
         manifest_text = ui.manifest_label.config.call_args.kwargs["text"]
-        assert "This run: 2 schedules" in manifest_text
-        assert "Night: 07/30/2026 (1)" in manifest_text
-        assert "Day: 07/31/2026 (1)" in manifest_text
+        assert "1. Night — 07/30/2026 — 1 document" in manifest_text
+        assert "2. Day — 07/31/2026 — 1 document" in manifest_text
         assert "Printer: Test Printer" in manifest_text
         ui.print_btn.config.assert_called_with(text="Print 2 schedules")
+        ui._shift_panels["night"].count_label.config.assert_called_with(
+            text="Selected · 1 document"
+        )
+        ui._shift_panels["day"].count_label.config.assert_called_with(
+            text="Selected · 1 document"
+        )
 
     def test_manifest_preview_blocks_empty_selection(self, ui):
         """No included shifts should produce no jobs and no numeric promise."""
         ui._shift_panels["night"].enabled_var.set(False)
         ui._shift_panels["day"].enabled_var.set(False)
+        ui.manifest_title_label = MagicMock()
         ui.manifest_label = MagicMock()
         ui.print_btn = MagicMock()
 
         ui.refresh_manifest_preview()
 
-        manifest_text = ui.manifest_label.config.call_args.kwargs["text"]
-        assert "This run: No schedules selected" in manifest_text
+        assert (
+            ui.manifest_title_label.config.call_args.kwargs["text"]
+            == "This run: No schedules selected"
+        )
         ui.print_btn.config.assert_called_with(text="Print schedules")
+
+    def test_primary_action_uses_themed_ttk_button(self, ui):
+        """The primary action must not use the unreadable macOS classic Tk button."""
+        ttk_print_calls = [
+            call
+            for call in ui._test_ttk_button_class.call_args_list
+            if str(call.kwargs.get("text", "")).startswith("Print")
+        ]
+        tk_print_calls = [
+            call
+            for call in ui._test_tk_button_class.call_args_list
+            if str(call.kwargs.get("text", "")).startswith("Print")
+        ]
+
+        assert len(ttk_print_calls) == 1
+        assert ttk_print_calls[0].kwargs["style"] == "Primary.TButton"
+        assert tk_print_calls == []
+
+    def test_processing_mode_uses_danger_style_then_restores_manifest_action(self, ui):
+        """Cancel state and normal print state should each use readable ttk styling."""
+        ui.print_btn = MagicMock()
+
+        ui.set_processing_mode(True)
+        ui.set_processing_mode(False)
+
+        ui.print_btn.config.assert_any_call(text="Cancel", style="Danger.TButton")
+        ui.print_btn.config.assert_any_call(style="Primary.TButton")
+
+    def test_setup_summary_reports_configuration_without_exposing_paths(self, ui):
+        """Collapsed setup should state readiness without crowding the work surface."""
+        ui.setup_summary_label = MagicMock()
+
+        ui.refresh_setup_summary()
+
+        summary = ui.setup_summary_label.config.call_args.kwargs["text"]
+        assert summary == "Templates configured\nTest Printer"
+        assert "C:/Templates" not in summary
+
+    def test_setup_change_toggle_preserves_configured_values(self, ui):
+        """Opening setup details should not rewrite folder or printer values."""
+        ui._setup_details = MagicMock()
+        ui._setup_expanded = False
+        before = (
+            ui.get_day_folder(),
+            ui.get_night_folder(),
+            ui.get_printer_name(),
+        )
+
+        ui._toggle_setup_details()
+        ui._toggle_setup_details()
+
+        assert ui._setup_details.pack.call_count == 1
+        ui._setup_details.pack_forget.assert_called_once()
+        assert (
+            ui.get_day_folder(),
+            ui.get_night_folder(),
+            ui.get_printer_name(),
+        ) == before
 
     def test_set_inputs_enabled_locks_and_restores_shift_controls(self, ui):
         """Processing lock state should cover every independent shift control."""

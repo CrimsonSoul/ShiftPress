@@ -16,7 +16,6 @@ from .config import ConfigManager, AppConfig
 from .scheduler import get_english_day_name, validate_date_range
 from .constants import (
     PROGRESS_MAX,
-    COLORS,
     DEFAULT_PRINTER_LABEL,
     LOG_FILENAME,
     LARGE_BATCH_THRESHOLD,
@@ -135,6 +134,7 @@ class ShiftPressApp:
                 self.ui.night_entry.insert(0, config.night_folder)
             if config.printer_name and self.ui.printer_var:
                 self.ui.printer_var.set(config.printer_name)
+            self.ui.refresh_setup_summary()
             logger.info("Configuration loaded successfully")
         except Exception as e:
             logger.error(f"Error loading configuration: {e}")
@@ -352,8 +352,7 @@ class ShiftPressApp:
 
         # Update button text to STOP and disable inputs during processing
         self.ui.set_inputs_enabled(False)
-        if self.ui.print_btn:
-            self.ui.print_btn.config(text="Cancel", bg=COLORS.error)
+        self.ui.set_processing_mode(True)
 
         # Start processing thread with pre-collected values.
         # Non-daemon so that __exit__/finally COM cleanup runs even if the
@@ -384,9 +383,7 @@ class ShiftPressApp:
         if self._closing:
             return
         self.ui.set_inputs_enabled(True)
-        if self.ui.print_btn:
-            self.ui.print_btn.config(bg=COLORS.accent)
-        self.ui.refresh_manifest_preview()
+        self.ui.set_processing_mode(False)
         self.ui.set_print_button_state("normal")
 
     def _print_job(

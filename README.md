@@ -18,7 +18,10 @@ ShiftPress is a Windows desktop app that batch-prints shift schedule templates v
 
 ## Core Features
 
-- Batch print processing for date ranges across day/night template folders
+- Independent Day and Night print selections with single-date or date-range
+  scope for each shift
+- Exact preflight-neutral print manifest showing the selected dates, document
+  count, and printer before a run starts
 - Date replacement automation with optional header/footer-only mode
 - Template path, printer, and date-range preflight validation before any processing begins
 - Per-document retry handling for transient COM errors with structured failure logging
@@ -71,6 +74,10 @@ pylint src --fail-under=8.0      # linting gate
 ```
 
 The test suite mocks all Windows-only modules so it can run on any platform in CI.
+Before a release, use the
+[Windows print smoke test](docs/windows-smoke-test.md) to verify real Word COM
+and physical printer behavior for Night-only, Day-only, both-shift, and mixed
+scope runs.
 
 ## Security
 

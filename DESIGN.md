@@ -1,4 +1,3 @@
-<!-- SEED: established with the user before implementation; re-run $impeccable document once there's code to capture the actual tokens and components. -->
 ---
 name: ShiftPress
 description: A low-risk native print console for deliberate shift-schedule runs.
@@ -32,36 +31,37 @@ information that determines what paper will be produced.
 ## Colors
 
 Use a restrained dark neutral system with one action accent and narrow semantic
-accents for shift identity.
+accents for shift identity. These values are the implemented source of truth in
+`src/constants.py`.
 
 ### Primary
 
-- **Press Amber** `[to be resolved during implementation]`: Reserved for the
-  primary print action, focus, and Night-shift identity.
+- **Action Blue** `#1267C9`: Reserved for the final print action. Use
+  `#0F56A8` for hover and pressed states.
 
 ### Secondary
 
-- **Day Signal Blue** `[to be resolved during implementation]`: Identifies
-  Day-shift controls and status without competing with the primary action.
-- **Ready Green** `[to be resolved during implementation]`: Indicates successful
-  validation and print readiness.
+- **Night Amber** `#F2B340`: Identifies Night-shift controls and status.
+- **Day Cyan** `#38BDF8`: Identifies Day-shift controls and status without
+  competing with the primary action.
+- **Progress Green** `#4ADE80`: Indicates active progress and successful
+  completion.
+- **Error Rose** `#FB7185`: Indicates validation errors and the cancel action.
 
 ### Neutral
 
-- **Window Charcoal** `[to be resolved during implementation]`: Main application
-  background.
-- **Control Graphite** `[to be resolved during implementation]`: Group and field
-  surfaces.
-- **Divider Steel** `[to be resolved during implementation]`: Borders and
-  separators.
-- **Paper White** `[to be resolved during implementation]`: Primary text.
-- **Muted Slate** `[to be resolved during implementation]`: Supporting labels
-  and secondary status.
+- **Window Charcoal** `#16171A`: Main application background.
+- **Work Surface** `#24262A`: Raised group and card surfaces.
+- **Recessed Input** `#1B1C20`: Entry and progress-trough surfaces.
+- **Secondary Control** `#303238`: Neutral button surfaces and hover states.
+- **Divider Steel** `#5A5D64`: Borders and separators.
+- **Paper White** `#F4F4F5`: Primary text.
+- **Muted Slate** `#B5B7BD`: Supporting labels and secondary status.
 
 ### Named Rules
 
-**The Semantic Accent Rule.** Amber and blue identify Night and Day or convey a
-real control state; they are not ambient decoration.
+**The Semantic Accent Rule.** Amber and cyan identify Night and Day; saturated
+blue identifies the print action. They are not ambient decoration.
 
 **The One Primary Action Rule.** Only the final print button receives the
 strongest filled treatment.
@@ -101,8 +101,10 @@ switching tabs or opening a modal. The window stays resizable and may expand
 automatically when native content would otherwise clip.
 
 Use a compact spacing rhythm with larger separation between configuration,
-schedule intent, and execution. Preserve a clear top-to-bottom sequence:
-understand setup, choose work, confirm exact scope, then print.
+schedule intent, and execution. Setup appears as a safe summary by default;
+`Change…` reveals the native fields in place and `Done` restores the compact
+work surface without changing their values. Preserve a clear top-to-bottom
+sequence: understand setup, choose work, confirm exact scope, then print.
 
 **The Visible Scope Rule.** Information that changes what will print must remain
 on the main surface; do not hide one shift behind tabs or secondary navigation.
