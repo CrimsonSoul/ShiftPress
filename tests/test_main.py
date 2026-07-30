@@ -4,6 +4,7 @@ Integration tests for main application module.
 
 import csv
 import sys
+from dataclasses import replace
 from datetime import date
 from unittest.mock import MagicMock, patch
 
@@ -12,6 +13,7 @@ import pytest
 # Import the class directly, then grab the actual module from sys.modules
 # (src.main as a name is shadowed by the main() function exported in src.__init__.py)
 from src.main import ShiftPressApp, _compute_batch_size
+from src.print_manifest import PrintJob, ShiftSelection
 
 main_module = sys.modules["src.main"]
 
@@ -33,6 +35,24 @@ class TestShiftPressApp:
             mock_ui.get_available_printers.return_value = ["Test Printer"]
             mock_ui.get_start_date.return_value = date(2026, 1, 14)
             mock_ui.get_end_date.return_value = date(2026, 1, 14)
+            mock_ui.get_shift_selections.return_value = (
+                ShiftSelection(
+                    shift_type="night",
+                    enabled=True,
+                    mode="single",
+                    start_date=date(2026, 1, 14),
+                    end_date=date(2026, 1, 14),
+                    folder="/tmp/night",
+                ),
+                ShiftSelection(
+                    shift_type="day",
+                    enabled=True,
+                    mode="single",
+                    start_date=date(2026, 1, 15),
+                    end_date=date(2026, 1, 15),
+                    folder="/tmp/day",
+                ),
+            )
             mock_ui.progress_var = MagicMock()
             mock_ui.progress_var.get.return_value = 0.0
             mock_ui.print_btn = MagicMock()
@@ -46,24 +66,68 @@ class TestShiftPressApp:
             yield app
 
     def test_validate_inputs_missing_day_folder(self, app):
-        """Should fail validation when day folder is empty."""
-        app.ui.get_day_folder.return_value = ""
-        is_valid, error = app._validate_inputs()
-        assert is_valid is False
+        """An included Day shift should require its own folder."""
+        night, day = app.ui.get_shift_selections.return_value
+        app.ui.get_shift_selections.return_value = (
+            night,
+            replace(day, folder=""),
+        )
+
+        request, error = app._validate_inputs()
+
+        assert request is None
         assert "Day Templates" in error
 
     def test_validate_inputs_missing_night_folder(self, app):
-        """Should fail validation when night folder is empty."""
-        app.ui.get_night_folder.return_value = ""
-        is_valid, error = app._validate_inputs()
-        assert is_valid is False
+        """An included Night shift should require its own folder."""
+        night, day = app.ui.get_shift_selections.return_value
+        app.ui.get_shift_selections.return_value = (
+            replace(night, folder=""),
+            day,
+        )
+
+        request, error = app._validate_inputs()
+
+        assert request is None
         assert "Night Templates" in error
+
+    def test_validate_inputs_ignores_disabled_shift_folder(self, app):
+        """A disabled shift must not validate or block on its folder."""
+        night, day = app.ui.get_shift_selections.return_value
+        app.ui.get_shift_selections.return_value = (
+            night,
+            replace(day, enabled=False, folder=""),
+        )
+
+        with patch.object(
+            main_module, "validate_folder_path", return_value=(True, None)
+        ) as mock_validate, patch.object(main_module, "WordProcessor") as MockWP:
+            MockWP.return_value.find_template_file.return_value = "/tmp/template.docx"
+            request, error = app._validate_inputs()
+
+        assert request is not None
+        assert error is None
+        mock_validate.assert_called_once_with("/tmp/night")
+        assert [job.shift_type for job in request.manifest] == ["night"]
+
+    def test_validate_inputs_requires_at_least_one_shift(self, app):
+        """Printing without Night or Day intent must stop before environment checks."""
+        night, day = app.ui.get_shift_selections.return_value
+        app.ui.get_shift_selections.return_value = (
+            replace(night, enabled=False),
+            replace(day, enabled=False),
+        )
+
+        request, error = app._validate_inputs()
+
+        assert request is None
+        assert error == "Select at least one Night or Day schedule"
 
     def test_validate_inputs_missing_printer(self, app):
         """Should fail validation when no printer selected."""
         app.ui.get_printer_name.return_value = "Choose Printer"
-        is_valid, error = app._validate_inputs()
-        assert is_valid is False
+        request, error = app._validate_inputs()
+        assert request is None
         assert "printer" in error.lower()
 
     def test_validate_inputs_printer_not_available(self, app):
@@ -73,32 +137,59 @@ class TestShiftPressApp:
         with patch.object(
             main_module, "validate_folder_path", return_value=(True, None)
         ):
-            is_valid, error = app._validate_inputs()
-        assert is_valid is False
+            request, error = app._validate_inputs()
+        assert request is None
         assert "not available" in (error or "").lower()
 
     def test_validate_inputs_missing_dates(self, app):
-        """Should fail validation when dates are missing."""
-        app.ui.get_start_date.return_value = None
-        with patch.object(
-            main_module, "validate_folder_path", return_value=(True, None)
-        ):
-            is_valid, error = app._validate_inputs()
-        assert is_valid is False
-        assert "date" in error.lower()
+        """Each included shift should require its active date."""
+        night, day = app.ui.get_shift_selections.return_value
+        app.ui.get_shift_selections.return_value = (
+            replace(night, start_date=None),
+            day,
+        )
+
+        request, error = app._validate_inputs()
+
+        assert request is None
+        assert error == "Select a Night date"
+
+    def test_validate_inputs_labels_invalid_independent_range(self, app):
+        """A reversed range should identify the affected shift."""
+        night, day = app.ui.get_shift_selections.return_value
+        app.ui.get_shift_selections.return_value = (
+            night,
+            replace(
+                day,
+                mode="range",
+                start_date=date(2026, 1, 18),
+                end_date=date(2026, 1, 16),
+            ),
+        )
+
+        request, error = app._validate_inputs()
+
+        assert request is None
+        assert (
+            error == "Invalid Day date selection: End date cannot be before start date"
+        )
 
     def test_validate_inputs_success(self, app):
-        """Should validate inputs when environment and templates look good."""
+        """Successful validation should return the exact independent manifest."""
 
         with patch.object(
             main_module, "validate_folder_path", return_value=(True, None)
         ), patch.object(main_module, "WordProcessor") as MockWP:
             mock_wp = MockWP.return_value
             mock_wp.find_template_file.return_value = "/tmp/template.docx"
-            is_valid, error = app._validate_inputs()
+            request, error = app._validate_inputs()
 
-        assert is_valid is True
+        assert request is not None
         assert error is None
+        assert [(job.date, job.shift_type) for job in request.manifest] == [
+            (date(2026, 1, 14), "night"),
+            (date(2026, 1, 15), "day"),
+        ]
 
     @patch.object(main_module, "WordProcessor")
     @patch.object(main_module, "validate_folder_path", return_value=(True, None))
@@ -304,9 +395,21 @@ class TestShiftPressApp:
         (day_dir / "Wednesday.docx").write_text("dummy")
         (night_dir / "Wednesday Night.docx").write_text("dummy")
 
-        ok, err = app._preflight_templates(
-            str(day_dir), str(night_dir), date(2026, 1, 14), date(2026, 1, 14)
+        manifest = (
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder=str(night_dir),
+            ),
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="day",
+                template_name="Wednesday",
+                folder=str(day_dir),
+            ),
         )
+        ok, err = app._preflight_templates(manifest)
         assert ok is True
         assert err is None
         # Should stash the WordProcessor for reuse
@@ -322,9 +425,21 @@ class TestShiftPressApp:
         # Only create night template, day is missing
         (night_dir / "Wednesday.docx").write_text("dummy")
 
-        ok, err = app._preflight_templates(
-            str(day_dir), str(night_dir), date(2026, 1, 14), date(2026, 1, 14)
+        manifest = (
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder=str(night_dir),
+            ),
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="day",
+                template_name="Wednesday",
+                folder=str(day_dir),
+            ),
         )
+        ok, err = app._preflight_templates(manifest)
         assert ok is False
         assert "Missing required templates" in err
 
@@ -342,12 +457,38 @@ class TestShiftPressApp:
             mock_wp.find_template_file.side_effect = main_module.TemplateLookupError(
                 "Ambiguous match"
             )
-            ok, err = app._preflight_templates(
-                str(day_dir), str(night_dir), date(2026, 1, 14), date(2026, 1, 14)
+            manifest = (
+                PrintJob(
+                    date=date(2026, 1, 14),
+                    shift_type="night",
+                    template_name="Wednesday Night",
+                    folder=str(night_dir),
+                ),
             )
+            ok, err = app._preflight_templates(manifest)
 
         assert ok is False
         assert "lookup error" in err.lower()
+
+    def test_preflight_checks_only_selected_templates(self, app):
+        """Preflight must not inspect templates absent from the manifest."""
+        manifest = (
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/night",
+            ),
+        )
+
+        with patch.object(main_module, "WordProcessor") as MockWP:
+            mock_wp = MockWP.return_value
+            mock_wp.find_template_file.return_value = "/night/Wednesday Night.docx"
+            ok, err = app._preflight_templates(manifest)
+
+        assert ok is True
+        assert err is None
+        mock_wp.find_template_file.assert_called_once_with("/night", "Wednesday Night")
 
     def test_load_config_populates_entries(self, app):
         """_load_config should populate UI entries from saved config."""
@@ -453,33 +594,53 @@ class TestShiftPressApp:
 
         assert result is None
 
-    def test_start_processing_batch_params_strip_quotes(self, app):
-        """start_processing should strip surrounding quotes from folder paths in batch_params."""
-        # Make validation pass
-        app.ui.get_day_folder.return_value = '"C:\\Users\\day"'
-        app.ui.get_night_folder.return_value = "'C:\\Users\\night'"
-
-        captured_params = {}
-
-        def capture_process_batch(params):
-            captured_params.update(params)
-
+    def test_validate_inputs_normalizes_folder_quotes_once(self, app):
+        """Validated request and jobs should share the same normalized paths."""
+        night, day = app.ui.get_shift_selections.return_value
+        app.ui.get_shift_selections.return_value = (
+            replace(night, folder="'C:\\Users\\night'"),
+            replace(day, folder='"C:\\Users\\day"'),
+        )
         with patch.object(
             main_module, "validate_folder_path", return_value=(True, None)
-        ), patch.object(main_module, "WordProcessor") as MockWP, patch.object(
-            app, "_process_batch", side_effect=capture_process_batch
-        ):
+        ), patch.object(main_module, "WordProcessor") as MockWP:
             mock_wp = MockWP.return_value
             mock_wp.find_template_file.return_value = "/tmp/template.docx"
+            request, error = app._validate_inputs()
 
+        assert request is not None
+        assert error is None
+        assert request.day_folder == "C:\\Users\\day"
+        assert request.night_folder == "C:\\Users\\night"
+        assert {job.folder for job in request.manifest} == {
+            "C:\\Users\\day",
+            "C:\\Users\\night",
+        }
+
+    def test_large_batch_confirmation_uses_manifest_document_count(self, app):
+        """Large-batch confirmation should describe concrete selected jobs."""
+        request = MagicMock()
+        request.manifest = tuple(
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/night",
+            )
+            for _index in range(30)
+        )
+        app.ui.ask_yes_no.return_value = False
+
+        with patch.object(
+            app, "_validate_inputs", return_value=(request, None)
+        ), patch.object(main_module.threading, "Thread") as MockThread:
             app.start_processing()
 
-            # Wait for the thread to finish (it runs our mock immediately)
-            if app._processing_thread:
-                app._processing_thread.join(timeout=5)
-
-            assert captured_params["day_folder"] == "C:\\Users\\day"
-            assert captured_params["night_folder"] == "C:\\Users\\night"
+        title, message = app.ui.ask_yes_no.call_args.args
+        assert title == "Large Batch Confirm"
+        assert "30 selected schedules" in message
+        assert "days x 2 shifts" not in message
+        MockThread.assert_not_called()
 
     def test_show_failure_summary_with_none_report_path(self, app, tmp_path):
         """_show_failure_summary should handle report_path=None gracefully."""

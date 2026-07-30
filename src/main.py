@@ -6,6 +6,7 @@ Batch print shift schedules via Word COM automation.
 
 import threading
 import csv
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Any, Optional, Callable, TypedDict
 
@@ -26,6 +27,7 @@ from .constants import (
 from .logger import setup_logging, get_logger
 from .path_validation import validate_folder_path
 from .scheduler import get_shift_template_name, validate_date_range, get_date_range
+from .print_manifest import PrintJob, ShiftSelection, build_print_manifest
 from .ui import ScheduleAppUI
 from .word_processor import (
     WordProcessor,
@@ -51,6 +53,16 @@ class FailedOperation(TypedDict):
     shift: str
     template: str
     error: Optional[str]
+
+
+@dataclass(frozen=True)
+class _BatchRequest:
+    """Validated UI snapshot passed unchanged to the worker thread."""
+
+    manifest: tuple[PrintJob, ...]
+    printer_name: str
+    day_folder: str
+    night_folder: str
 
 
 def _compute_batch_size(start_date: date, end_date: date) -> tuple[int, int]:
@@ -161,77 +173,92 @@ class ShiftPressApp:
             except Exception as e:
                 logger.error(f"Error saving configuration: {e}")
 
-    def _validate_inputs(self) -> tuple[bool, Optional[str]]:
-        """
-        Validate all user inputs before processing.
+    @staticmethod
+    def _normalize_folder(folder: str) -> str:
+        """Normalize user-pasted folder paths consistently."""
+        return (folder or "").strip().strip('"').strip("'")
 
-        Returns:
-            Tuple of (is_valid, error_message)
-        """
-        day_folder = (self.ui.get_day_folder() or "").strip().strip('"').strip("'")
-        night_folder = (self.ui.get_night_folder() or "").strip().strip('"').strip("'")
+    def _validate_inputs(
+        self,
+    ) -> tuple[Optional[_BatchRequest], Optional[str]]:
+        """Validate UI selections and return one immutable worker request."""
+        raw_selections = self.ui.get_shift_selections()
+        selections: tuple[ShiftSelection, ...] = tuple(
+            replace(
+                selection,
+                folder=self._normalize_folder(selection.folder),
+            )
+            for selection in raw_selections
+        )
+        enabled_selections = tuple(
+            selection for selection in selections if selection.enabled
+        )
+        if not enabled_selections:
+            return None, "Select at least one Night or Day schedule"
+
+        for selection in enabled_selections:
+            label = selection.shift_type.title()
+            try:
+                start_date, end_date = selection.active_range()
+            except ValueError as e:
+                return None, str(e)
+            is_valid, error_msg = validate_date_range(start_date, end_date)
+            if not is_valid:
+                return None, f"Invalid {label} date selection: {error_msg}"
+
         printer_name = (self.ui.get_printer_name() or "").strip()
-        start_date = self.ui.get_start_date()
-        end_date = self.ui.get_end_date()
-
-        # Check that folders are provided
-        if not day_folder:
-            return False, "Please select a Day Templates folder"
-        if not night_folder:
-            return False, "Please select a Night Templates folder"
         if not printer_name or printer_name == DEFAULT_PRINTER_LABEL:
-            return False, "Please select a target printer"
+            return None, "Please select a target printer"
 
-        # Validate printer against enumerated list when available
         available_printers: list[str] = []
         try:
             available_printers = self.ui.get_available_printers()
         except Exception as e:
             logger.debug(f"Could not enumerate printers for validation: {e}")
-            available_printers = []
 
         if available_printers and printer_name not in available_printers:
-            return False, (
+            return None, (
                 "Selected printer is not available. Click Refresh and select a valid printer."
             )
 
-        # Validate date range
-        if not start_date or not end_date:
-            return False, "Please select both start and end dates"
-
-        is_valid, error_msg = validate_date_range(start_date, end_date)
-        if not is_valid:
-            return False, error_msg
-
-        # Ensure Word automation bindings exist (pywin32)
         ok, word_err = get_word_automation_status()
         if not ok:
-            return False, word_err
+            return None, word_err
 
-        # Validate folder paths
-        is_valid, error_msg = validate_folder_path(day_folder)
-        if not is_valid:
-            return False, f"Invalid Day Templates folder: {error_msg}"
+        for selection in enabled_selections:
+            label = selection.shift_type.title()
+            if not selection.folder:
+                return None, f"Please select a {label} Templates folder"
 
-        is_valid, error_msg = validate_folder_path(night_folder)
-        if not is_valid:
-            return False, f"Invalid Night Templates folder: {error_msg}"
+        for selection in enabled_selections:
+            label = selection.shift_type.title()
+            is_valid, error_msg = validate_folder_path(selection.folder)
+            if not is_valid:
+                return None, f"Invalid {label} Templates folder: {error_msg}"
 
-        # Preflight template availability (fail fast before opening Word/printing)
-        ok, preflight_err = self._preflight_templates(
-            day_folder, night_folder, start_date, end_date
-        )
+        try:
+            manifest = build_print_manifest(selections)
+        except ValueError as e:
+            return None, str(e)
+
+        ok, preflight_err = self._preflight_templates(manifest)
         if not ok:
-            return False, preflight_err
+            return None, preflight_err
 
-        return True, None
+        folders = {selection.shift_type: selection.folder for selection in selections}
+        return (
+            _BatchRequest(
+                manifest=manifest,
+                printer_name=printer_name,
+                day_folder=folders.get("day", ""),
+                night_folder=folders.get("night", ""),
+            ),
+            None,
+        )
 
     def _preflight_templates(
         self,
-        day_folder: str,
-        night_folder: str,
-        start_date: date,
-        end_date: date,
+        manifest: tuple[PrintJob, ...],
     ) -> tuple[bool, Optional[str]]:
         """Validate that all required templates exist and resolve unambiguously.
 
@@ -240,49 +267,31 @@ class ShiftPressApp:
         instead of re-scanning the filesystem.
 
         Args:
-            day_folder: Path to the day-shift template folder.
-            night_folder: Path to the night-shift template folder.
-            start_date: Inclusive start date of the batch.
-            end_date: Inclusive end date of the batch.
+            manifest: Exact concrete jobs selected for this batch.
 
         Returns:
             Tuple of ``(ok, error_message)``.  On success *error_message*
             is ``None``.
         """
 
-        try:
-            total_days, _ = _compute_batch_size(start_date, end_date)
-        except Exception as e:
-            logger.debug(f"Could not compute batch size: {e}")
-            return False, "Invalid date range"
-
-        day_templates: set[str] = set()
-        night_templates: set[str] = set()
-
-        for dt in get_date_range(start_date, end_date):
-            day_templates.add(get_shift_template_name(dt, "day"))
-            night_templates.add(get_shift_template_name(dt, "night"))
-
         wp = WordProcessor()
         missing: list[str] = []
+        requirements = sorted(
+            {(job.shift_type, job.folder, job.template_name) for job in manifest},
+            key=lambda item: (item[0], item[2], item[1]),
+        )
 
-        def check(folder: str, templates: set[str], label: str) -> Optional[str]:
-            for name in sorted(templates):
-                try:
-                    found = wp.find_template_file(folder, name)
-                except TemplateLookupError as e:
-                    return f"{label} template lookup error for '{name}': {e}"
-                if not found:
-                    missing.append(f"{label}: {name}")
-            return None
-
-        err = check(day_folder, day_templates, "Day")
-        if err:
-            return False, err
-
-        err = check(night_folder, night_templates, "Night")
-        if err:
-            return False, err
+        for shift_type, folder, template_name in requirements:
+            label = shift_type.title()
+            try:
+                found = wp.find_template_file(folder, template_name)
+            except TemplateLookupError as e:
+                return (
+                    False,
+                    f"{label} template lookup error for '{template_name}': {e}",
+                )
+            if not found:
+                missing.append(f"{label}: {template_name}")
 
         if missing:
             shown = "\n".join(missing[:MAX_PREFLIGHT_MISSING_SHOWN])
@@ -319,44 +328,44 @@ class ShiftPressApp:
             return
 
         # Validate inputs
-        is_valid, error_msg = self._validate_inputs()
-        if not is_valid:
+        request, error_msg = self._validate_inputs()
+        if request is None:
             self.ui.show_warning("Validation Error", error_msg or "Unknown error")
             return
 
-        # Confirm large batches
-        start_date = self.ui.get_start_date()
-        end_date = self.ui.get_end_date()
-        if start_date and end_date:
-            total_days, total_docs = _compute_batch_size(start_date, end_date)
-            if total_days >= LARGE_BATCH_THRESHOLD:
-                ok = self.ui.ask_yes_no(
-                    "Large Batch Confirm",
-                    f"This will print {total_docs} documents ({total_days} days x 2 shifts).\n\nContinue?",
+        total_jobs = len(request.manifest)
+        if total_jobs >= LARGE_BATCH_THRESHOLD:
+            scope_lines: list[str] = []
+            for shift_type in ("night", "day"):
+                dates = sorted(
+                    {
+                        job.date
+                        for job in request.manifest
+                        if job.shift_type == shift_type
+                    }
                 )
-                if not ok:
-                    self.ui.update_status("Cancelled by user", 0)
-                    return
+                if not dates:
+                    continue
+                if dates[0] == dates[-1]:
+                    scope = dates[0].strftime("%m/%d/%Y")
+                else:
+                    scope = (
+                        f"{dates[0].strftime('%m/%d/%Y')} – "
+                        f"{dates[-1].strftime('%m/%d/%Y')}"
+                    )
+                scope_lines.append(f"{shift_type.title()}: {scope}")
+            scopes = "\n".join(scope_lines)
+            ok = self.ui.ask_yes_no(
+                "Large Batch Confirm",
+                f"This will print {total_jobs} selected schedules.\n\n"
+                f"{scopes}\n\nContinue?",
+            )
+            if not ok:
+                self.ui.update_status("Cancelled by user", 0)
+                return
 
         # Reset cancel flag
         self._cancel_event.clear()
-
-        # Collect all UI values in the main thread (Tkinter is not thread-safe).
-        # Strip surrounding quotes so paths validated in _validate_inputs match
-        # the paths used during processing (both must apply the same transform).
-        batch_params = {
-            "start_date": self.ui.get_start_date(),
-            "end_date": self.ui.get_end_date(),
-            "day_folder": (self.ui.get_day_folder() or "")
-            .strip()
-            .strip('"')
-            .strip("'"),
-            "night_folder": (self.ui.get_night_folder() or "")
-            .strip()
-            .strip('"')
-            .strip("'"),
-            "printer_name": (self.ui.get_printer_name() or "").strip(),
-        }
 
         # Update button text to STOP and disable inputs during processing
         self.ui.set_inputs_enabled(False)
@@ -367,7 +376,7 @@ class ShiftPressApp:
         # Non-daemon so that __exit__/finally COM cleanup runs even if the
         # main thread exits.  _on_close joins with a timeout to avoid hanging.
         self._processing_thread = threading.Thread(
-            target=self._process_batch, args=(batch_params,), daemon=False
+            target=self._process_batch, args=(request,), daemon=False
         )
         self._processing_thread.start()
 
