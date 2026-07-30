@@ -8,8 +8,9 @@ import os
 import sys
 import subprocess
 import tkinter as tk
+from dataclasses import dataclass
 from tkinter import messagebox, filedialog, ttk
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 try:
@@ -40,6 +41,12 @@ from .constants import (
 )
 from .logger import get_logger
 from .app_paths import get_data_dir
+from .print_manifest import (
+    DateMode,
+    ShiftSelection,
+    ShiftType,
+    build_print_manifest,
+)
 
 logger = get_logger(__name__)
 
@@ -48,6 +55,22 @@ _APP_VERSION: Optional[str] = None
 
 # Placeholder text shown in empty path entries.
 _PATH_PLACEHOLDER = "Click Browse to select folder\u2026"
+
+
+@dataclass
+class _ShiftPanelWidgets:
+    """Widget and variable references for one independent shift panel."""
+
+    enabled_var: tk.BooleanVar
+    mode_var: tk.StringVar
+    include_check: ttk.Checkbutton
+    single_radio: ttk.Radiobutton
+    range_radio: ttk.Radiobutton
+    single_picker: Any
+    range_start_picker: Any
+    range_end_picker: Any
+    single_wrap: ttk.Frame
+    range_wrap: ttk.Frame
 
 
 def _get_version() -> str:
@@ -164,18 +187,21 @@ def _setup_placeholder(entry: ttk.Entry, placeholder: str) -> None:
 class ScheduleAppUI:
     """Main UI class for the ShiftPress application."""
 
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, today: Optional[date] = None):
         """
         Initialize the UI.
 
         Args:
-            root: The Tkinter root window
+            root: The Tkinter root window.
+            today: Optional deterministic date used for launch defaults.
         """
         self.root = root
         self.root.title("ShiftPress")
         self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
         self.root.resizable(WINDOW_RESIZABLE, WINDOW_RESIZABLE)
         self.root.configure(bg=COLORS.background)
+        self._today = today or date.today()
+        self._inputs_enabled = True
 
         # Apply window icon if available.
         self._apply_icon()
@@ -194,9 +220,8 @@ class ScheduleAppUI:
         # UI components
         self.day_entry: Optional[ttk.Entry] = None
         self.night_entry: Optional[ttk.Entry] = None
-        self.start_date_picker: Optional[Any] = None
-        self.end_date_picker: Optional[Any] = None
         self.printer_var: Optional[tk.StringVar] = None
+        self.manifest_label: Optional[ttk.Label] = None
         self.status_label: Optional[ttk.Label] = None
         self.progress_var: Optional[tk.DoubleVar] = None
         self.progress: Optional[ttk.Progressbar] = None
@@ -204,6 +229,8 @@ class ScheduleAppUI:
         self.printer_dropdown: Optional[ttk.OptionMenu] = None
         self._refresh_btn: Optional[ttk.Button] = None
         self.print_btn: Optional[tk.Button] = None
+        self._browse_buttons: list[ttk.Button] = []
+        self._shift_panels: dict[ShiftType, _ShiftPanelWidgets] = {}
 
         # Cached enumerations
         self._cached_printers: list[str] = []
@@ -242,6 +269,30 @@ class ScheduleAppUI:
             "TLabelframe.Label",
             background=COLORS.background,
             foreground=COLORS.accent,
+            font=FONTS.card_title,
+        )
+        self.style.configure(
+            "Night.TLabelframe",
+            background=COLORS.background,
+            bordercolor=COLORS.accent,
+            borderwidth=1,
+        )
+        self.style.configure(
+            "Night.TLabelframe.Label",
+            background=COLORS.background,
+            foreground=COLORS.accent,
+            font=FONTS.card_title,
+        )
+        self.style.configure(
+            "Day.TLabelframe",
+            background=COLORS.background,
+            bordercolor=COLORS.day_accent,
+            borderwidth=1,
+        )
+        self.style.configure(
+            "Day.TLabelframe.Label",
+            background=COLORS.background,
+            foreground=COLORS.day_accent,
             font=FONTS.card_title,
         )
 
@@ -325,6 +376,17 @@ class ScheduleAppUI:
         )
         self.style.map(
             "TCheckbutton",
+            background=[("active", COLORS.background)],
+            foreground=[("disabled", COLORS.text_dim)],
+        )
+        self.style.configure(
+            "TRadiobutton",
+            background=COLORS.background,
+            foreground=COLORS.text_main,
+            font=FONTS.sub,
+        )
+        self.style.map(
+            "TRadiobutton",
             background=[("active", COLORS.background)],
             foreground=[("disabled", COLORS.text_dim)],
         )
@@ -436,17 +498,12 @@ class ScheduleAppUI:
         bg_canvas = ttk.Frame(self.root, padding="28")
         bg_canvas.pack(fill="both", expand=True)
 
-        # Header
         self._create_header(bg_canvas)
-
-        # Card 1 — Templates
-        self._create_templates_card(bg_canvas)
-
-        # Card 2 — Print Settings
-        self._create_print_settings_card(bg_canvas)
-
-        # Footer (status + progress + action button)
+        self._create_setup_card(bg_canvas)
+        self._create_shift_selection_row(bg_canvas)
+        self._create_manifest_card(bg_canvas)
         self._create_footer(bg_canvas)
+        self.refresh_manifest_preview()
 
     def _create_header(self, parent: ttk.Frame) -> None:
         """Create the header section."""
@@ -471,43 +528,41 @@ class ScheduleAppUI:
             style="Sub.TLabel",
         ).pack(anchor="w", pady=(4, 0))
 
-    def _create_templates_card(self, parent: ttk.Frame) -> None:
-        """Create the Templates card (day / night template paths)."""
-        card = ttk.LabelFrame(parent, text=" Templates ", padding="20")
+    def _create_setup_card(self, parent: ttk.Frame) -> None:
+        """Create compact template and printer setup controls."""
+        card = ttk.LabelFrame(parent, text=" Setup ", padding="16")
         card.pack(fill="x", pady=(0, 16))
 
         self.day_entry = self._create_path_row(card, "Day Templates", "")
         self.night_entry = self._create_path_row(card, "Night Templates", "")
 
-        # Attach placeholder text to both entries.
         _setup_placeholder(self.day_entry, _PATH_PLACEHOLDER)
         _setup_placeholder(self.night_entry, _PATH_PLACEHOLDER)
-
-    def _create_print_settings_card(self, parent: ttk.Frame) -> None:
-        """Create the Print Settings card (date range + printer)."""
-        card = ttk.LabelFrame(parent, text=" Print Settings ", padding="20")
-        card.pack(fill="x", pady=(0, 16))
-
-        # Date range
-        self._create_date_range_row(card)
-
-        # Printer
         self._create_printer_row(card)
 
-    def _create_date_range_row(self, parent: Union[ttk.Frame, ttk.LabelFrame]) -> None:
-        """Create the date range selection row."""
-        if DateEntry is None:
-            ttk.Label(
-                parent,
-                text="Missing dependency: tkcalendar. Please reinstall requirements.txt.",
-                style="Error.TLabel",
-            ).pack(anchor="w", pady=(0, 8))
-            logger.error("tkcalendar is not installed; date pickers unavailable")
-            return
+    def _create_shift_selection_row(self, parent: ttk.Frame) -> None:
+        """Create equal-width Night and Day selection panels."""
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=(0, 16))
+        row.grid_columnconfigure(0, weight=1, uniform="shift")
+        row.grid_columnconfigure(1, weight=1, uniform="shift")
 
-        date_entry_cls = cast(Any, DateEntry)
+        self._create_shift_panel(
+            row,
+            shift_type="night",
+            default_date=self._today,
+            column=0,
+        )
+        self._create_shift_panel(
+            row,
+            shift_type="day",
+            default_date=self._today + timedelta(days=1),
+            column=1,
+        )
 
-        calendar_kw = {
+    def _calendar_kwargs(self) -> dict[str, Any]:
+        """Return the shared dark-theme calendar colors."""
+        return {
             "background": COLORS.surface,
             "foreground": COLORS.text_main,
             "bordercolor": COLORS.border,
@@ -525,60 +580,198 @@ class ScheduleAppUI:
             "othermonthweforeground": COLORS.text_dim,
         }
 
-        range_row = ttk.Frame(parent)
-        range_row.pack(fill="x", pady=(0, 20))
-
-        # Start Date
-        start_wrap = ttk.Frame(range_row)
-        start_wrap.pack(side="left", expand=True, fill="x", padx=(0, 12))
-        ttk.Label(start_wrap, text="Start date", style="Sub.TLabel").pack(
-            anchor="w", pady=(0, 8)
-        )
-        start_picker = self._create_date_entry(
-            date_entry_cls,
-            start_wrap,
-            calendar_kw=calendar_kw,
-        )
-        start_picker.pack(fill="x")
-        self.start_date_picker = start_picker
-
-        try:
-            start_picker.bind("<<DateEntrySelected>>", self._on_start_date_selected)
-        except Exception as e:
-            logger.debug(f"Could not bind DateEntrySelected event: {e}")
-
-        # End Date
-        end_wrap = ttk.Frame(range_row)
-        end_wrap.pack(side="left", expand=True, fill="x", padx=(12, 0))
-        ttk.Label(end_wrap, text="End date", style="Sub.TLabel").pack(
-            anchor="w", pady=(0, 8)
-        )
-        end_picker = self._create_date_entry(
-            date_entry_cls,
-            end_wrap,
-            calendar_kw=calendar_kw,
-        )
-        end_picker.pack(fill="x")
-        self.end_date_picker = end_picker
-
-    def _on_start_date_selected(self, event: Optional[object] = None) -> None:
-        """Sync end date to match start date if end is currently before start."""
-
-        start_picker = self.start_date_picker
-        end_picker = self.end_date_picker
-
-        if start_picker is None or end_picker is None:
+    def _create_shift_panel(
+        self,
+        parent: ttk.Frame,
+        shift_type: ShiftType,
+        default_date: date,
+        column: int,
+    ) -> None:
+        """Create one independent native shift selection panel."""
+        if DateEntry is None:
+            ttk.Label(
+                parent,
+                text="Missing dependency: tkcalendar. Please reinstall requirements.txt.",
+                style="Error.TLabel",
+            ).grid(row=0, column=column, sticky="nsew", padx=8)
+            logger.error("tkcalendar is not installed; date pickers unavailable")
             return
 
+        date_entry_cls = cast(Any, DateEntry)
+        label = shift_type.title()
+        style_name = f"{label}.TLabelframe"
+        horizontal_padding = (0, 8) if column == 0 else (8, 0)
+        card = ttk.LabelFrame(
+            parent,
+            text=f" {label} ",
+            padding="16",
+            style=style_name,
+        )
+        card.grid(row=0, column=column, sticky="nsew", padx=horizontal_padding)
+
+        enabled_var = tk.BooleanVar(value=True)
+        mode_var = tk.StringVar(value="single")
+
+        def sync_panel(selected: ShiftType = shift_type) -> None:
+            self._sync_shift_panel_state(selected)
+
+        include_check = ttk.Checkbutton(
+            card,
+            text=f"Include {label} schedule",
+            variable=enabled_var,
+            command=sync_panel,
+        )
+        include_check.pack(anchor="w", pady=(0, 12))
+
+        mode_row = ttk.Frame(card)
+        mode_row.pack(fill="x", pady=(0, 12))
+        single_radio = ttk.Radiobutton(
+            mode_row,
+            text="Single date",
+            variable=mode_var,
+            value="single",
+            command=sync_panel,
+        )
+        single_radio.pack(side="left")
+        range_radio = ttk.Radiobutton(
+            mode_row,
+            text="Date range",
+            variable=mode_var,
+            value="range",
+            command=sync_panel,
+        )
+        range_radio.pack(side="left", padx=(18, 0))
+
+        date_stack = ttk.Frame(card)
+        date_stack.pack(fill="x")
+        date_stack.grid_columnconfigure(0, weight=1)
+
+        single_wrap = ttk.Frame(date_stack)
+        single_wrap.grid(row=0, column=0, sticky="ew")
+        ttk.Label(single_wrap, text="Date", style="Sub.TLabel").pack(
+            anchor="w", pady=(0, 6)
+        )
+        single_picker = self._create_date_entry(
+            date_entry_cls,
+            single_wrap,
+            calendar_kw=self._calendar_kwargs(),
+        )
+        single_picker.pack(fill="x")
+        single_picker.set_date(default_date)
+
+        range_wrap = ttk.Frame(date_stack)
+        range_wrap.grid(row=0, column=0, sticky="ew")
+        range_wrap.grid_columnconfigure(0, weight=1)
+        range_wrap.grid_columnconfigure(1, weight=1)
+
+        range_start_wrap = ttk.Frame(range_wrap)
+        range_start_wrap.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ttk.Label(range_start_wrap, text="Start date", style="Sub.TLabel").pack(
+            anchor="w", pady=(0, 6)
+        )
+        range_start_picker = self._create_date_entry(
+            date_entry_cls,
+            range_start_wrap,
+            calendar_kw=self._calendar_kwargs(),
+        )
+        range_start_picker.pack(fill="x")
+        range_start_picker.set_date(default_date)
+
+        range_end_wrap = ttk.Frame(range_wrap)
+        range_end_wrap.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        ttk.Label(range_end_wrap, text="End date", style="Sub.TLabel").pack(
+            anchor="w", pady=(0, 6)
+        )
+        range_end_picker = self._create_date_entry(
+            date_entry_cls,
+            range_end_wrap,
+            calendar_kw=self._calendar_kwargs(),
+        )
+        range_end_picker.pack(fill="x")
+        range_end_picker.set_date(default_date)
+
+        panel = _ShiftPanelWidgets(
+            enabled_var=enabled_var,
+            mode_var=mode_var,
+            include_check=include_check,
+            single_radio=single_radio,
+            range_radio=range_radio,
+            single_picker=single_picker,
+            range_start_picker=range_start_picker,
+            range_end_picker=range_end_picker,
+            single_wrap=single_wrap,
+            range_wrap=range_wrap,
+        )
+        self._shift_panels[shift_type] = panel
+
+        single_picker.bind(
+            "<<DateEntrySelected>>",
+            lambda _event, selected=shift_type: self._on_shift_date_selected(selected),
+        )
+        range_start_picker.bind(
+            "<<DateEntrySelected>>",
+            lambda _event, selected=shift_type: self._on_range_start_selected(selected),
+        )
+        range_end_picker.bind(
+            "<<DateEntrySelected>>",
+            lambda _event, selected=shift_type: self._on_shift_date_selected(selected),
+        )
+        self._sync_shift_panel_state(shift_type)
+
+    def _on_shift_date_selected(self, shift_type: ShiftType) -> None:
+        """Refresh visible intent after a shift date changes."""
+        del shift_type
+        self.refresh_manifest_preview()
+
+    def _on_range_start_selected(self, shift_type: ShiftType) -> None:
+        """Keep one shift's range end on or after its range start."""
+        panel = self._shift_panels[shift_type]
         try:
-            start_dt = cast(Any, start_picker).get_date()
-            end_dt = cast(Any, end_picker).get_date()
+            start_dt = panel.range_start_picker.get_date()
+            end_dt = panel.range_end_picker.get_date()
             if end_dt < start_dt:
-                cast(Any, end_picker).set_date(start_dt)
+                panel.range_end_picker.set_date(start_dt)
         except Exception as e:
-            # DateEntry implementations vary; never block the UI on this helper.
-            logger.debug(f"Error syncing date pickers: {e}")
-            return
+            logger.debug(f"Error syncing {shift_type} date pickers: {e}")
+        self.refresh_manifest_preview()
+
+    def _sync_shift_panel_state(self, shift_type: ShiftType) -> None:
+        """Apply include/mode state to one panel without changing its values."""
+        panel = self._shift_panels[shift_type]
+        enabled = bool(panel.enabled_var.get()) and self._inputs_enabled
+        state: Literal["normal", "disabled"] = "normal" if enabled else "disabled"
+
+        for widget in (
+            panel.single_radio,
+            panel.range_radio,
+            panel.single_picker,
+            panel.range_start_picker,
+            panel.range_end_picker,
+        ):
+            widget.config(state=state)
+
+        if panel.mode_var.get() == "range":
+            panel.single_wrap.grid_remove()
+            panel.range_wrap.grid()
+        else:
+            panel.range_wrap.grid_remove()
+            panel.single_wrap.grid()
+
+        if len(self._shift_panels) == 2:
+            self.refresh_manifest_preview()
+
+    def _create_manifest_card(self, parent: ttk.Frame) -> None:
+        """Create the exact preflight-neutral print manifest summary."""
+        card = ttk.LabelFrame(parent, text=" Print manifest ", padding="16")
+        card.pack(fill="x", pady=(0, 16))
+        self.manifest_label = ttk.Label(
+            card,
+            text="This run: No schedules selected",
+            style="Sub.TLabel",
+            justify="left",
+            anchor="w",
+        )
+        self.manifest_label.pack(fill="x")
 
     def _create_date_entry(
         self,
@@ -659,6 +852,12 @@ class ScheduleAppUI:
         logger.debug(f"Found {len(all_printers)} printers")
 
         self.printer_var = tk.StringVar(value=DEFAULT_PRINTER_LABEL)
+        try:
+            self.printer_var.trace_add(
+                "write", lambda *_args: self.refresh_manifest_preview()
+            )
+        except Exception as e:
+            logger.debug(f"Could not watch printer selection: {e}")
         printer_row = ttk.Frame(output_row)
         printer_row.pack(fill="x")
 
@@ -709,7 +908,7 @@ class ScheduleAppUI:
         status_wrap.pack(fill="x", pady=(0, 12))
         self.status_label = ttk.Label(
             status_wrap,
-            text="Ready when you are",
+            text="Review the selected schedules",
             style="Sub.TLabel",
         )
         self.status_label.pack(side="left")
@@ -749,7 +948,7 @@ class ScheduleAppUI:
         # Action button
         self.print_btn = tk.Button(
             footer,
-            text="Print Schedules",
+            text="Print schedules",
             bg=COLORS.accent,
             fg=COLORS.text_main,
             font=FONTS.button,
@@ -787,13 +986,15 @@ class ScheduleAppUI:
         entry.insert(0, default_val)
         entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
-        ttk.Button(
+        browse_button = ttk.Button(
             row,
             text="Browse",
             width=10,
             command=lambda: self._browse_folder(entry),
             cursor="hand2",
-        ).pack(side="right")
+        )
+        browse_button.pack(side="right")
+        self._browse_buttons.append(browse_button)
 
         return entry
 
@@ -838,25 +1039,106 @@ class ScheduleAppUI:
         """Return the available printers list (best-effort)."""
         return list(self._cached_printers)
 
-    def get_start_date(self) -> Optional[date]:
-        """Get the start date, or None if unavailable or invalid."""
-        if not self.start_date_picker:
-            return None
+    def _get_picker_date(self, picker: Any, label: str) -> Optional[date]:
+        """Read one DateEntry without letting parse failures escape the UI."""
         try:
-            return self.start_date_picker.get_date()
+            selected = picker.get_date()
+            return selected if isinstance(selected, date) else None
         except (ValueError, AttributeError):
-            logger.warning("Could not parse start date from picker")
+            logger.warning(f"Could not parse {label} from picker")
             return None
 
-    def get_end_date(self) -> Optional[date]:
-        """Get the end date, or None if unavailable or invalid."""
-        if not self.end_date_picker:
-            return None
+    def _get_shift_selection(self, shift_type: ShiftType) -> ShiftSelection:
+        """Collect one panel's state without reading another shift."""
+        panel = self._shift_panels[shift_type]
+        mode_value = panel.mode_var.get()
+        mode: DateMode = "range" if mode_value == "range" else "single"
+        if mode == "single":
+            start_date = self._get_picker_date(
+                panel.single_picker, f"{shift_type} date"
+            )
+        else:
+            start_date = self._get_picker_date(
+                panel.range_start_picker, f"{shift_type} range start"
+            )
+        end_date = self._get_picker_date(
+            panel.range_end_picker, f"{shift_type} range end"
+        )
+        folder = (
+            self.get_night_folder() if shift_type == "night" else self.get_day_folder()
+        )
+        return ShiftSelection(
+            shift_type=shift_type,
+            enabled=bool(panel.enabled_var.get()),
+            mode=mode,
+            start_date=start_date,
+            end_date=end_date,
+            folder=folder,
+        )
+
+    def get_shift_selections(self) -> tuple[ShiftSelection, ShiftSelection]:
+        """Return independent Night and Day selections in stable display order."""
+        return (
+            self._get_shift_selection("night"),
+            self._get_shift_selection("day"),
+        )
+
+    def _format_selection_summary(
+        self, selection: ShiftSelection, job_count: int
+    ) -> str:
+        """Format one enabled shift's active date scope and document count."""
+        start_date, end_date = selection.active_range()
+        if start_date == end_date:
+            scope = start_date.strftime("%m/%d/%Y")
+        else:
+            scope = (
+                f"{start_date.strftime('%m/%d/%Y')} – "
+                f"{end_date.strftime('%m/%d/%Y')}"
+            )
+        return f"{selection.shift_type.title()}: {scope} ({job_count})"
+
+    def refresh_manifest_preview(self) -> None:
+        """Refresh the preflight-neutral manifest copy and count-aware action."""
+        if len(self._shift_panels) != 2:
+            return
+
+        selections = self.get_shift_selections()
         try:
-            return self.end_date_picker.get_date()
-        except (ValueError, AttributeError):
-            logger.warning("Could not parse end date from picker")
-            return None
+            manifest = build_print_manifest(selections)
+            if manifest:
+                lines = [f"This run: {len(manifest)} schedules"]
+                for selection in selections:
+                    if not selection.enabled:
+                        continue
+                    count = sum(
+                        1 for job in manifest if job.shift_type == selection.shift_type
+                    )
+                    lines.append(self._format_selection_summary(selection, count))
+            else:
+                lines = ["This run: No schedules selected"]
+        except ValueError as e:
+            manifest = ()
+            lines = ["This run: Check date selection", str(e)]
+
+        printer = self.get_printer_name()
+        printer_label = (
+            printer
+            if printer and printer != DEFAULT_PRINTER_LABEL
+            else "Choose a printer"
+        )
+        lines.append(f"Printer: {printer_label}")
+
+        if self.manifest_label is not None:
+            self.manifest_label.config(text="\n".join(lines))
+        if self.print_btn is not None:
+            count = len(manifest)
+            if count == 0:
+                button_text = "Print schedules"
+            elif count == 1:
+                button_text = "Print 1 schedule"
+            else:
+                button_text = f"Print {count} schedules"
+            self.print_btn.config(text=button_text)
 
     # ------------------------------------------------------------------
     # Public setters / commands
@@ -889,6 +1171,7 @@ class ScheduleAppUI:
         Args:
             enabled: True to enable inputs, False to disable.
         """
+        self._inputs_enabled = enabled
         state: Literal["normal", "disabled"] = "normal" if enabled else "disabled"
         for widget in (self.day_entry, self.night_entry):
             if widget is not None:
@@ -896,12 +1179,11 @@ class ScheduleAppUI:
                     widget.config(state=state)
                 except Exception as e:
                     logger.debug(f"Could not set entry state: {e}")
-        for picker in (self.start_date_picker, self.end_date_picker):
-            if picker is not None:
-                try:
-                    picker.config(state=state)
-                except Exception as e:
-                    logger.debug(f"Could not set date picker state: {e}")
+        for button in self._browse_buttons:
+            try:
+                button.config(state=state)
+            except Exception as e:
+                logger.debug(f"Could not set Browse button state: {e}")
         if self.printer_dropdown is not None:
             try:
                 self.printer_dropdown.config(state=state)
@@ -912,6 +1194,12 @@ class ScheduleAppUI:
                 self._refresh_btn.config(state=state)
             except Exception as e:
                 logger.debug(f"Could not set refresh button state: {e}")
+        for shift_type, panel in self._shift_panels.items():
+            try:
+                panel.include_check.config(state=state)
+                self._sync_shift_panel_state(shift_type)
+            except Exception as e:
+                logger.debug(f"Could not set {shift_type} panel state: {e}")
 
     def set_print_button_state(self, state: Literal["normal", "disabled"]) -> None:
         """

@@ -3,10 +3,52 @@ Unit tests for UI module.
 """
 
 import tkinter as tk
+from datetime import date
 from unittest.mock import MagicMock, patch
+
 import pytest
 
 from src.ui import ScheduleAppUI
+
+
+class _FakeVariable:
+    """Small Tk variable substitute that preserves real get/set behavior."""
+
+    def __init__(self, *args, value=None, **kwargs):
+        del args, kwargs
+        self._value = value
+
+    def get(self):
+        """Return the stored value."""
+        return self._value
+
+    def set(self, value):
+        """Store a new value."""
+        self._value = value
+
+    def trace_add(self, *_args, **_kwargs):
+        """Accept Tk trace registration without requiring a Tcl interpreter."""
+        return "trace"
+
+
+class _FakeDateEntry:
+    """DateEntry substitute with real date storage and mocked widget methods."""
+
+    def __init__(self, *_args, **_kwargs):
+        self._date = None
+        self.pack = MagicMock()
+        self.grid = MagicMock()
+        self.grid_remove = MagicMock()
+        self.bind = MagicMock()
+        self.config = MagicMock()
+
+    def get_date(self):
+        """Return the current date."""
+        return self._date
+
+    def set_date(self, value):
+        """Set the current date."""
+        self._date = value
 
 
 class TestScheduleAppUI:
@@ -33,29 +75,33 @@ class TestScheduleAppUI:
         ), patch(
             "src.ui.ttk.Checkbutton"
         ), patch(
+            "src.ui.ttk.Radiobutton"
+        ), patch(
             "src.ui.ttk.OptionMenu"
         ), patch(
             "src.ui.ttk.Progressbar"
         ), patch(
             "src.ui.tk.Button"
         ), patch(
-            "src.ui.tk.StringVar"
+            "src.ui.tk.StringVar", side_effect=_FakeVariable
         ), patch(
-            "src.ui.tk.DoubleVar"
+            "src.ui.tk.DoubleVar", side_effect=_FakeVariable
         ), patch(
-            "src.ui.tk.BooleanVar"
+            "src.ui.tk.BooleanVar", side_effect=_FakeVariable
         ), patch(
-            "src.ui.DateEntry"
+            "src.ui.DateEntry", side_effect=_FakeDateEntry
         ):
-            ui = ScheduleAppUI(root)
+            ui = ScheduleAppUI(root, today=date(2026, 7, 30))
             # Manually assign mock widgets for testing
             ui.day_entry = MagicMock()
+            ui.day_entry.get.return_value = "C:/Templates/Day"
             ui.night_entry = MagicMock()
+            ui.night_entry.get.return_value = "C:/Templates/Night"
             ui.print_btn = MagicMock()
             ui.status_label = MagicMock()
-            ui.progress_var = MagicMock()
+            ui.progress_var = _FakeVariable(value=0.0)
             ui._progress_pct = MagicMock()
-            ui.printer_var = MagicMock()
+            ui.printer_var = _FakeVariable(value="Test Printer")
             yield ui
 
     def test_init(self, ui):
@@ -74,6 +120,129 @@ class TestScheduleAppUI:
         ui.night_entry.get.return_value = "C:/Templates/Night"
         assert ui.get_night_folder() == "C:/Templates/Night"
 
+    def test_defaults_night_today_and_day_tomorrow(self, ui):
+        """Fresh UI state should match the operational handoff workflow."""
+        night, day = ui.get_shift_selections()
+
+        assert (night.enabled, night.mode, night.start_date) == (
+            True,
+            "single",
+            date(2026, 7, 30),
+        )
+        assert (day.enabled, day.mode, day.start_date) == (
+            True,
+            "single",
+            date(2026, 7, 31),
+        )
+
+    def test_shift_selections_keep_independent_modes_and_dates(self, ui):
+        """Changing Night state must not alter the Day selection."""
+        night_panel = ui._shift_panels["night"]
+        day_panel = ui._shift_panels["day"]
+        night_panel.mode_var.set("range")
+        night_panel.range_start_picker.set_date(date(2026, 8, 1))
+        night_panel.range_end_picker.set_date(date(2026, 8, 3))
+        day_panel.enabled_var.set(False)
+        day_panel.single_picker.set_date(date(2026, 8, 8))
+
+        night, day = ui.get_shift_selections()
+
+        assert (
+            night.enabled,
+            night.mode,
+            night.start_date,
+            night.end_date,
+        ) == (
+            True,
+            "range",
+            date(2026, 8, 1),
+            date(2026, 8, 3),
+        )
+        assert (day.enabled, day.mode, day.start_date) == (
+            False,
+            "single",
+            date(2026, 8, 8),
+        )
+
+    def test_disabling_night_does_not_disable_day_controls(self, ui):
+        """Each Include toggle should control only its own date controls."""
+        night_panel = ui._shift_panels["night"]
+        day_panel = ui._shift_panels["day"]
+        night_panel.single_radio = MagicMock()
+        day_panel.single_radio = MagicMock()
+        night_panel.enabled_var.set(False)
+        day_panel.enabled_var.set(True)
+
+        ui._sync_shift_panel_state("night")
+
+        night_panel.single_radio.config.assert_called_with(state="disabled")
+        day_panel.single_radio.config.assert_not_called()
+
+    def test_mode_change_preserves_all_picker_values(self, ui):
+        """Switching modes should hide controls without resetting their dates."""
+        panel = ui._shift_panels["night"]
+        panel.single_picker.set_date(date(2026, 8, 2))
+        panel.range_start_picker.set_date(date(2026, 8, 5))
+        panel.range_end_picker.set_date(date(2026, 8, 7))
+        panel.mode_var.set("range")
+
+        ui._sync_shift_panel_state("night")
+        panel.mode_var.set("single")
+        ui._sync_shift_panel_state("night")
+
+        assert panel.single_picker.get_date() == date(2026, 8, 2)
+        assert panel.range_start_picker.get_date() == date(2026, 8, 5)
+        assert panel.range_end_picker.get_date() == date(2026, 8, 7)
+
+    def test_manifest_preview_uses_actual_selected_job_count(self, ui):
+        """The visible manifest and action should reflect independent jobs."""
+        ui.manifest_label = MagicMock()
+        ui.print_btn = MagicMock()
+
+        ui.refresh_manifest_preview()
+
+        manifest_text = ui.manifest_label.config.call_args.kwargs["text"]
+        assert "This run: 2 schedules" in manifest_text
+        assert "Night: 07/30/2026 (1)" in manifest_text
+        assert "Day: 07/31/2026 (1)" in manifest_text
+        assert "Printer: Test Printer" in manifest_text
+        ui.print_btn.config.assert_called_with(text="Print 2 schedules")
+
+    def test_manifest_preview_blocks_empty_selection(self, ui):
+        """No included shifts should produce no jobs and no numeric promise."""
+        ui._shift_panels["night"].enabled_var.set(False)
+        ui._shift_panels["day"].enabled_var.set(False)
+        ui.manifest_label = MagicMock()
+        ui.print_btn = MagicMock()
+
+        ui.refresh_manifest_preview()
+
+        manifest_text = ui.manifest_label.config.call_args.kwargs["text"]
+        assert "This run: No schedules selected" in manifest_text
+        ui.print_btn.config.assert_called_with(text="Print schedules")
+
+    def test_set_inputs_enabled_locks_and_restores_shift_controls(self, ui):
+        """Processing lock state should cover every independent shift control."""
+        for panel in ui._shift_panels.values():
+            panel.include_check = MagicMock()
+            panel.single_radio = MagicMock()
+            panel.range_radio = MagicMock()
+
+        ui.set_inputs_enabled(False)
+
+        for panel in ui._shift_panels.values():
+            panel.include_check.config.assert_called_with(state="disabled")
+            panel.single_radio.config.assert_called_with(state="disabled")
+            panel.range_radio.config.assert_called_with(state="disabled")
+            panel.single_picker.config.assert_called_with(state="disabled")
+            panel.range_start_picker.config.assert_called_with(state="disabled")
+            panel.range_end_picker.config.assert_called_with(state="disabled")
+
+        ui.set_inputs_enabled(True)
+
+        for panel in ui._shift_panels.values():
+            panel.include_check.config.assert_called_with(state="normal")
+
     def test_set_print_button_state(self, ui):
         """Should update button state."""
         ui.set_print_button_state("disabled")
@@ -85,7 +254,7 @@ class TestScheduleAppUI:
         ui.status_label.config.assert_called_with(
             text="Processing...", style="Sub.TLabel"
         )
-        ui.progress_var.set.assert_called_with(50.0)
+        assert ui.progress_var.get() == 50.0
 
     def test_update_status_complete_style(self, ui):
         """Should apply success style when message contains 'complete'."""

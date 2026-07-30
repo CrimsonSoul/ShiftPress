@@ -96,7 +96,7 @@ CONFIG_FILENAME: Final = "config.json"
 LOG_FILENAME: Final = "shiftpress.log"
 
 # UI Constants
-WINDOW_WIDTH: Final = 640
+WINDOW_WIDTH: Final = 980
 WINDOW_HEIGHT: Final = 820
 WINDOW_RESIZABLE: Final = True
 
@@ -146,6 +146,7 @@ class Colors:
     background: str = "#18181B"  # Zinc-900 — warm near-black
     surface: str = "#27272A"  # Zinc-800 — warm card surface
     accent: str = "#F59E0B"  # Amber-500 — warm, distinctive
+    day_accent: str = "#38BDF8"  # Sky-400 — Day shift identity
     text_main: str = "#F4F4F5"  # Zinc-100 — warm off-white
     text_dim: str = "#A1A1AA"  # Zinc-400 — readable secondary
     success: str = "#34D399"  # Emerald-400
