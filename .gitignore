@@ -51,6 +51,9 @@ failure_report*.csv
 htmlcov/
 .tox/
 
+# Impeccable local question sessions
+.impeccable/questions/
+
 # OS
 .DS_Store
 Thumbs.db
