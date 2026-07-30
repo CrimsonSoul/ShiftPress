@@ -107,7 +107,7 @@ PROGRESS_MAX: Final = 100
 MAX_DAYS_RANGE: Final = 366
 
 # Batch processing thresholds
-LARGE_BATCH_THRESHOLD: Final = 30  # days — prompt user for confirmation
+LARGE_BATCH_THRESHOLD: Final = 30  # documents — prompt user for confirmation
 MAX_PREFLIGHT_MISSING_SHOWN: Final = 10  # missing templates shown before truncation
 MAX_FAILURE_SUMMARY_SHOWN: Final = 5  # failures shown in the summary dialog
 
