@@ -12,10 +12,27 @@ import pytest
 
 # Import the class directly, then grab the actual module from sys.modules
 # (src.main as a name is shadowed by the main() function exported in src.__init__.py)
-from src.main import ShiftPressApp, _compute_batch_size
+from src.main import ShiftPressApp, _BatchRequest
 from src.print_manifest import PrintJob, ShiftSelection
 
 main_module = sys.modules["src.main"]
+
+
+def _request(*jobs: PrintJob) -> _BatchRequest:
+    """Build a validated worker request with fixed configuration values."""
+    return _BatchRequest(
+        manifest=tuple(jobs),
+        printer_name="Test Printer",
+        day_folder="/tmp/day",
+        night_folder="/tmp/night",
+    )
+
+
+def _run_scheduled_callbacks(app: ShiftPressApp) -> None:
+    """Execute callbacks captured by the mocked Tk root."""
+    for call in app.root.after.call_args_list:
+        callback = call.args[1]
+        callback()
 
 
 class TestShiftPressApp:
@@ -33,8 +50,6 @@ class TestShiftPressApp:
             mock_ui.get_night_folder.return_value = "/tmp/night"
             mock_ui.get_printer_name.return_value = "Test Printer"
             mock_ui.get_available_printers.return_value = ["Test Printer"]
-            mock_ui.get_start_date.return_value = date(2026, 1, 14)
-            mock_ui.get_end_date.return_value = date(2026, 1, 14)
             mock_ui.get_shift_selections.return_value = (
                 ShiftSelection(
                     shift_type="night",
@@ -192,31 +207,55 @@ class TestShiftPressApp:
         ]
 
     @patch.object(main_module, "WordProcessor")
-    @patch.object(main_module, "validate_folder_path", return_value=(True, None))
-    def test_process_batch_success(self, mock_validate, mock_wp_class, app):
-        """Should process all days and report success."""
+    def test_process_batch_uses_exact_manifest_order(self, mock_wp_class, app):
+        """The worker should print Night today followed by Day tomorrow."""
         mock_wp = MagicMock()
         mock_wp.print_document.return_value = (True, None)
         mock_wp.__enter__ = MagicMock(return_value=mock_wp)
         mock_wp.__exit__ = MagicMock(return_value=False)
         mock_wp_class.return_value = mock_wp
+        request = _request(
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/tmp/night",
+            ),
+            PrintJob(
+                date=date(2026, 1, 15),
+                shift_type="day",
+                template_name="THIRD Thursday",
+                folder="/tmp/day",
+            ),
+        )
 
-        params = {
-            "start_date": date(2026, 1, 14),
-            "end_date": date(2026, 1, 14),
-            "day_folder": "/tmp/day",
-            "night_folder": "/tmp/night",
-            "printer_name": "Test Printer",
-        }
+        app._process_batch(request)
+        _run_scheduled_callbacks(app)
 
-        app._process_batch(params)
-
-        # Should print both day and night shift
-        assert mock_wp.print_document.call_count == 2
+        assert [call.args for call in mock_wp.print_document.call_args_list] == [
+            (
+                "/tmp/night",
+                "Wednesday Night",
+                date(2026, 1, 14),
+                "Test Printer",
+            ),
+            (
+                "/tmp/day",
+                "THIRD Thursday",
+                date(2026, 1, 15),
+                "Test Printer",
+            ),
+        ]
+        app.ui.show_info.assert_called_once_with(
+            "Success",
+            "All 2 selected schedules have been processed and sent to the printer.",
+        )
+        status_messages = [call.args[0] for call in app.ui.update_status.call_args_list]
+        assert any("(1/2)" in message for message in status_messages)
+        assert any("(2/2)" in message for message in status_messages)
 
     @patch.object(main_module, "WordProcessor")
-    @patch.object(main_module, "validate_folder_path", return_value=(True, None))
-    def test_process_batch_cancel(self, mock_validate, mock_wp_class, app):
+    def test_process_batch_cancel_before_first_job(self, mock_wp_class, app):
         """Should stop processing when cancel event is set."""
         mock_wp = MagicMock()
         mock_wp.print_document.return_value = (True, None)
@@ -226,19 +265,51 @@ class TestShiftPressApp:
 
         # Set cancel before processing starts
         app._cancel_event.set()
+        request = _request(
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/tmp/night",
+            )
+        )
 
-        params = {
-            "start_date": date(2026, 1, 14),
-            "end_date": date(2026, 1, 16),
-            "day_folder": "/tmp/day",
-            "night_folder": "/tmp/night",
-            "printer_name": "Test Printer",
-        }
-
-        app._process_batch(params)
+        app._process_batch(request)
 
         # Should not have printed anything (cancelled immediately)
         assert mock_wp.print_document.call_count == 0
+
+    @patch.object(main_module, "WordProcessor")
+    def test_process_batch_cancel_between_selected_jobs(self, mock_wp_class, app):
+        """Cancellation after one document must prevent the next manifest job."""
+        mock_wp = MagicMock()
+        mock_wp.__enter__ = MagicMock(return_value=mock_wp)
+        mock_wp.__exit__ = MagicMock(return_value=False)
+
+        def print_once(*_args):
+            app._cancel_event.set()
+            return True, None
+
+        mock_wp.print_document.side_effect = print_once
+        mock_wp_class.return_value = mock_wp
+        request = _request(
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/tmp/night",
+            ),
+            PrintJob(
+                date=date(2026, 1, 15),
+                shift_type="day",
+                template_name="THIRD Thursday",
+                folder="/tmp/day",
+            ),
+        )
+
+        app._process_batch(request)
+
+        assert mock_wp.print_document.call_count == 1
 
     def test_on_close_without_active_thread(self, app):
         """Should destroy window immediately if no thread is running."""
@@ -302,13 +373,10 @@ class TestShiftPressApp:
         app.ui.set_print_button_state.assert_called_with("disabled")
 
     @patch.object(main_module, "WordProcessor")
-    @patch.object(main_module, "validate_folder_path", return_value=(True, None))
-    def test_process_batch_tracks_failures_with_summary(
-        self, mock_validate, mock_wp_class, app
-    ):
+    def test_process_batch_tracks_failures_with_summary(self, mock_wp_class, app):
         """Should call _show_failure_summary with the correct failures."""
         mock_wp = MagicMock()
-        # Day shift fails, night shift succeeds
+        # Night fails, then Day succeeds.
         mock_wp.print_document.side_effect = [
             (False, "Template not found"),
             (True, None),
@@ -316,33 +384,31 @@ class TestShiftPressApp:
         mock_wp.__enter__ = MagicMock(return_value=mock_wp)
         mock_wp.__exit__ = MagicMock(return_value=False)
         mock_wp_class.return_value = mock_wp
-
-        params = {
-            "start_date": date(2026, 1, 14),
-            "end_date": date(2026, 1, 14),
-            "day_folder": "/tmp/day",
-            "night_folder": "/tmp/night",
-            "printer_name": "Test Printer",
-        }
+        request = _request(
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/tmp/night",
+            ),
+            PrintJob(
+                date=date(2026, 1, 15),
+                shift_type="day",
+                template_name="THIRD Thursday",
+                folder="/tmp/day",
+            ),
+        )
 
         with patch.object(app, "_show_failure_summary") as mock_summary:
-            app._process_batch(params)
-
-            # The callback is scheduled via _safe_after — find it and call it
-            # to trigger _show_failure_summary
-            for call in app.root.after.call_args_list:
-                callback = call[0][1] if len(call[0]) > 1 else None
-                if callback is not None:
-                    try:
-                        callback()
-                    except Exception:
-                        pass
+            app._process_batch(request)
+            _run_scheduled_callbacks(app)
 
             mock_summary.assert_called_once()
             failures = mock_summary.call_args[0][0]
             assert len(failures) == 1
-            assert failures[0]["shift"] == "day"
+            assert failures[0]["shift"] == "night"
             assert "Template not found" in failures[0]["error"]
+            assert mock_wp.print_document.call_count == 2
 
     def test_write_failure_report_creates_csv(self, app, tmp_path):
         """_write_failure_report should create a CSV with correct headers."""
@@ -541,8 +607,7 @@ class TestShiftPressApp:
         assert "Failure report saved to" in msg
 
     @patch.object(main_module, "WordProcessor")
-    @patch.object(main_module, "validate_folder_path", return_value=(True, None))
-    def test_process_batch_exception_resets_ui(self, mock_validate, mock_wp_class, app):
+    def test_process_batch_exception_resets_ui(self, mock_wp_class, app):
         """_process_batch should reset UI to normal state even when an exception occurs."""
         mock_wp = MagicMock()
         mock_wp.__enter__ = MagicMock(return_value=mock_wp)
@@ -550,16 +615,16 @@ class TestShiftPressApp:
         # Blow up during print
         mock_wp.print_document.side_effect = RuntimeError("COM catastrophe")
         mock_wp_class.return_value = mock_wp
+        request = _request(
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/tmp/night",
+            )
+        )
 
-        params = {
-            "start_date": date(2026, 1, 14),
-            "end_date": date(2026, 1, 14),
-            "day_folder": "/tmp/day",
-            "night_folder": "/tmp/night",
-            "printer_name": "Test Printer",
-        }
-
-        app._process_batch(params)
+        app._process_batch(request)
 
         # The finally block schedules reset_ui via _safe_after.
         # Execute all scheduled callbacks.
@@ -577,6 +642,37 @@ class TestShiftPressApp:
         app.ui.set_inputs_enabled.assert_called_with(True)
         # Print button should be re-enabled
         app.ui.set_print_button_state.assert_called_with("normal")
+        app.ui.refresh_manifest_preview.assert_called()
+
+    @patch.object(main_module, "WordProcessor")
+    def test_process_batch_saves_configuration_and_consumes_preflight_cache(
+        self, mock_wp_class, app
+    ):
+        """The worker should persist setup values and consume the warm preflight object."""
+        warm_wp = MagicMock()
+        warm_wp.__enter__ = MagicMock(return_value=warm_wp)
+        warm_wp.__exit__ = MagicMock(return_value=False)
+        warm_wp.print_document.return_value = (True, None)
+        app._preflight_wp = warm_wp
+        request = _request(
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/tmp/night",
+            )
+        )
+
+        app._process_batch(request)
+
+        saved = app.config_manager.save.call_args.args[0]
+        assert (
+            saved.day_folder,
+            saved.night_folder,
+            saved.printer_name,
+        ) == ("/tmp/day", "/tmp/night", "Test Printer")
+        assert app._preflight_wp is None
+        mock_wp_class.assert_not_called()
 
     def test_write_failure_report_exception_returns_none(self, app, tmp_path):
         """_write_failure_report should return None when writing fails."""
@@ -639,7 +735,6 @@ class TestShiftPressApp:
         title, message = app.ui.ask_yes_no.call_args.args
         assert title == "Large Batch Confirm"
         assert "30 selected schedules" in message
-        assert "days x 2 shifts" not in message
         MockThread.assert_not_called()
 
     def test_show_failure_summary_with_none_report_path(self, app, tmp_path):
@@ -663,31 +758,3 @@ class TestShiftPressApp:
         assert "Failure report saved to" not in msg
         # Should still show the log file path
         assert "Log file" in msg
-
-
-class TestComputeBatchSize:
-    """Tests for _compute_batch_size function."""
-
-    def test_single_day(self):
-        """Single day should return 1 day and 2 jobs."""
-        total_days, total_jobs = _compute_batch_size(
-            date(2026, 1, 14), date(2026, 1, 14)
-        )
-        assert total_days == 1
-        assert total_jobs == 2
-
-    def test_week_range(self):
-        """A week should return 7 days and 14 jobs."""
-        total_days, total_jobs = _compute_batch_size(
-            date(2026, 1, 14), date(2026, 1, 20)
-        )
-        assert total_days == 7
-        assert total_jobs == 14
-
-    def test_month_range(self):
-        """A 30-day range should return 30 days and 60 jobs."""
-        total_days, total_jobs = _compute_batch_size(
-            date(2026, 1, 1), date(2026, 1, 30)
-        )
-        assert total_days == 30
-        assert total_jobs == 60

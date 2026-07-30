@@ -8,12 +8,12 @@ import threading
 import csv
 from dataclasses import dataclass, replace
 from datetime import date, datetime
-from typing import Any, Optional, Callable, TypedDict
+from typing import Optional, Callable, TypedDict
 
 import tkinter as tk
 
 from .config import ConfigManager, AppConfig
-from .scheduler import get_english_day_name
+from .scheduler import get_english_day_name, validate_date_range
 from .constants import (
     PROGRESS_MAX,
     COLORS,
@@ -26,7 +26,6 @@ from .constants import (
 
 from .logger import setup_logging, get_logger
 from .path_validation import validate_folder_path
-from .scheduler import get_shift_template_name, validate_date_range, get_date_range
 from .print_manifest import PrintJob, ShiftSelection, build_print_manifest
 from .ui import ScheduleAppUI
 from .word_processor import (
@@ -63,22 +62,6 @@ class _BatchRequest:
     printer_name: str
     day_folder: str
     night_folder: str
-
-
-def _compute_batch_size(start_date: date, end_date: date) -> tuple[int, int]:
-    """Compute total days and total jobs for a date range.
-
-    Args:
-        start_date: Inclusive start date.
-        end_date: Inclusive end date.
-
-    Returns:
-        Tuple of (total_days, total_jobs) where total_jobs = total_days * 2
-        (one day shift + one night shift per day).
-    """
-    total_days = (end_date - start_date).days + 1
-    total_jobs = total_days * 2
-    return total_days, total_jobs
 
 
 class ShiftPressApp:
@@ -402,36 +385,32 @@ class ShiftPressApp:
             return
         self.ui.set_inputs_enabled(True)
         if self.ui.print_btn:
-            self.ui.print_btn.config(text="Print Schedules", bg=COLORS.accent)
+            self.ui.print_btn.config(bg=COLORS.accent)
+        self.ui.refresh_manifest_preview()
         self.ui.set_print_button_state("normal")
 
-    def _print_shift(
+    def _print_job(
         self,
         word_proc: WordProcessor,
-        folder: str,
-        template: str,
-        current_date: date,
+        job: PrintJob,
         printer_name: str,
-        shift_label: str,
         job_index: int,
         total_jobs: int,
         failed_operations: list[FailedOperation],
     ) -> None:
-        """Print a single shift document and record failures.
+        """Print one concrete manifest job and record failures.
 
         Args:
             word_proc: Active WordProcessor instance.
-            folder: Template folder path.
-            template: Template name for the shift.
-            current_date: Date being processed.
+            job: Concrete immutable print job.
             printer_name: Target printer.
-            shift_label: Human-readable shift label (e.g. "Day" or "Night").
             job_index: Current 0-based job index (for progress display).
             total_jobs: Total number of jobs in the batch.
             failed_operations: Mutable list to append failure records to.
         """
-        day_name = get_english_day_name(current_date)
-        display_date = current_date.strftime("%m/%d/%Y")
+        shift_label = job.shift_type.title()
+        day_name = get_english_day_name(job.date)
+        display_date = job.date.strftime("%m/%d/%Y")
         progress = ((job_index + 1) / max(total_jobs, 1)) * 100
         msg = (
             f"Printing {shift_label} Shift: {day_name} {display_date} "
@@ -444,120 +423,73 @@ class ShiftPressApp:
         self._safe_after(_update)
 
         success, error = word_proc.print_document(
-            folder,
-            template,
-            current_date,
+            job.folder,
+            job.template_name,
+            job.date,
             printer_name,
         )
         if not success:
             failed_operations.append(
                 {
-                    "date": current_date,
-                    "shift": shift_label.lower(),
-                    "template": template,
+                    "date": job.date,
+                    "shift": job.shift_type,
+                    "template": job.template_name,
                     "error": error,
                 }
             )
             logger.error(
-                f"Failed to print {shift_label.lower()} shift for {current_date}: {error}"
+                f"Failed to print {job.shift_type} shift for {job.date}: {error}"
             )
 
-    def _process_batch(self, params: dict[str, Any]) -> None:
-        """
-        Process the batch of schedules.
+    def _process_batch(self, request: _BatchRequest) -> None:
+        """Process exactly the concrete jobs in a validated request.
 
         Args:
-            params: Pre-collected UI values with keys: start_date, end_date,
-                    day_folder, night_folder, printer_name
+            request: Immutable validated manifest and persisted setup values.
         """
-        start_date = params["start_date"]
-        end_date = params["end_date"]
-
-        if not start_date or not end_date:
-            logger.error("Attempted to process batch with missing dates")
+        total_jobs = len(request.manifest)
+        if total_jobs == 0:
+            logger.error("Attempted to process an empty print manifest")
             self._safe_after(self._reset_ui)
             return
 
-        day_folder = params["day_folder"]
-        night_folder = params["night_folder"]
-        printer_name = params["printer_name"]
-
-        # Save configuration
         config = AppConfig(
-            day_folder=day_folder,
-            night_folder=night_folder,
-            printer_name=printer_name,
+            day_folder=request.day_folder,
+            night_folder=request.night_folder,
+            printer_name=request.printer_name,
         )
         self._save_config(config)
 
-        # Calculate total days (MAX_DAYS_RANGE already validated by _validate_inputs)
-        total_days, total_jobs = _compute_batch_size(start_date, end_date)
-
-        logger.info(f"Processing {total_days} days from {start_date} to {end_date}")
-
-        # Track failed operations
+        logger.info(f"Processing {total_jobs} selected schedules")
         failed_operations: list[FailedOperation] = []
 
         try:
-            # Reuse the WordProcessor from preflight (warm template cache) if available.
             wp = self._preflight_wp or WordProcessor()
-            self._preflight_wp = None  # release reference
+            self._preflight_wp = None
 
             self._safe_after(lambda: self.ui.update_status("Initializing Word...", 0))
 
             with wp as word_proc:
-                job_index = 0
-                for current_date in get_date_range(start_date, end_date):
+                for job_index, job in enumerate(request.manifest):
                     if self._cancel_event.is_set():
                         logger.info("Batch processing cancelled by user")
                         self._cancel_ui_update()
                         return
 
-                    # Day Shift
-                    day_template = get_shift_template_name(current_date, "day")
-                    if self._cancel_event.is_set():
-                        self._cancel_ui_update()
-                        return
-                    self._print_shift(
+                    self._print_job(
                         word_proc,
-                        day_folder,
-                        day_template,
-                        current_date,
-                        printer_name,
-                        "Day",
+                        job,
+                        request.printer_name,
                         job_index,
                         total_jobs,
                         failed_operations,
                     )
-                    job_index += 1
 
-                    # Night Shift
-                    night_template = get_shift_template_name(current_date, "night")
-                    if self._cancel_event.is_set():
-                        self._cancel_ui_update()
-                        return
-                    self._print_shift(
-                        word_proc,
-                        night_folder,
-                        night_template,
-                        current_date,
-                        printer_name,
-                        "Night",
-                        job_index,
-                        total_jobs,
-                        failed_operations,
-                    )
-                    job_index += 1
-
-                # Complete
                 self._safe_after(
                     lambda: self.ui.update_status("Complete!", PROGRESS_MAX)
                 )
 
-                # Show results
                 if failed_operations:
-                    # Write the CSV report on the worker thread to keep the
-                    # UI thread free of blocking I/O.
                     report_path = self._write_failure_report(failed_operations)
                     snapshot = list(failed_operations)
                     self._safe_after(
@@ -567,7 +499,8 @@ class ShiftPressApp:
                     self._safe_after(
                         lambda: self.ui.show_info(
                             "Success",
-                            f"All {total_days} days have been processed and sent to the printer.",
+                            f"All {total_jobs} selected schedules have been "
+                            "processed and sent to the printer.",
                         )
                     )
 
