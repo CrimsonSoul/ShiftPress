@@ -97,7 +97,7 @@ LOG_FILENAME: Final = "shiftpress.log"
 
 # UI Constants
 WINDOW_WIDTH: Final = 1040
-WINDOW_HEIGHT: Final = 860
+WINDOW_HEIGHT: Final = 720
 WINDOW_RESIZABLE: Final = True
 
 # Progress bar

@@ -102,9 +102,11 @@ automatically when native content would otherwise clip.
 
 Use a compact spacing rhythm with larger separation between configuration,
 schedule intent, and execution. Setup appears as a safe summary by default;
-`Change…` reveals the native fields in place and `Done` restores the compact
-work surface without changing their values. Preserve a clear top-to-bottom
-sequence: understand setup, choose work, confirm exact scope, then print.
+`Change…` opens a compact native Setup dialog so configuration never displaces
+the shift cards, manifest, progress, or print action. `Done` returns focus to
+the unchanged work surface without changing entered values. Preserve a clear
+top-to-bottom sequence: understand setup, choose work, confirm exact scope,
+then print.
 
 **The Visible Scope Rule.** Information that changes what will print must remain
 on the main surface; do not hide one shift behind tabs or secondary navigation.

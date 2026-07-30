@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.constants import COLORS, FONTS
 from src.ui import ScheduleAppUI
 
 
@@ -67,9 +68,9 @@ class TestScheduleAppUI:
         # Mock win32print and widget creation to avoid Tcl errors
         with patch("win32print.EnumPrinters", return_value=[]), patch(
             "src.ui.ttk.Style"
-        ), patch("src.ui.ttk.Frame"), patch("src.ui.ttk.Label"), patch(
+        ), patch("src.ui.ttk.Frame") as MockFrame, patch("src.ui.ttk.Label"), patch(
             "src.ui.ttk.LabelFrame"
-        ), patch(
+        ) as MockLabelFrame, patch(
             "src.ui.ttk.Entry"
         ), patch(
             "src.ui.ttk.Button"
@@ -86,6 +87,8 @@ class TestScheduleAppUI:
         ), patch(
             "src.ui.tk.Button"
         ) as MockTkButton, patch(
+            "src.ui.tk.Toplevel"
+        ) as MockToplevel, patch(
             "src.ui.tk.StringVar", side_effect=_FakeVariable
         ), patch(
             "src.ui.tk.DoubleVar", side_effect=_FakeVariable
@@ -107,6 +110,9 @@ class TestScheduleAppUI:
             ui.printer_var = _FakeVariable(value="Test Printer")
             ui._test_ttk_button_class = MockTtkButton
             ui._test_tk_button_class = MockTkButton
+            ui._test_frame_class = MockFrame
+            ui._test_label_frame_class = MockLabelFrame
+            ui._test_toplevel_class = MockToplevel
             yield ui
 
     def test_init(self, ui):
@@ -266,6 +272,54 @@ class TestScheduleAppUI:
         assert ttk_print_calls[0].kwargs["style"] == "Primary.TButton"
         assert tk_print_calls == []
 
+    def test_group_titles_use_clean_background_and_custom_card_shells(self, ui):
+        """Section titles should sit on the window without LabelFrame patches."""
+        for style_name, foreground in (
+            ("SetupTitle.TLabel", COLORS.accent),
+            ("NightTitle.TLabel", COLORS.accent),
+            ("DayTitle.TLabel", COLORS.day_accent),
+        ):
+            ui.style.configure.assert_any_call(
+                style_name,
+                background=COLORS.background,
+                foreground=foreground,
+                font=FONTS.card_title,
+            )
+        assert ui._test_label_frame_class.call_count == 0
+        card_styles = {
+            call.kwargs.get("style") for call in ui._test_frame_class.call_args_list
+        }
+        assert {
+            "SetupCard.TFrame",
+            "NightCard.TFrame",
+            "DayCard.TFrame",
+        } <= card_styles
+
+    def test_manifest_uses_plain_bordered_frame_without_empty_title_strip(self, ui):
+        """The manifest should not reserve a blank LabelFrame title channel."""
+        manifest_frames = [
+            call
+            for call in ui._test_frame_class.call_args_list
+            if call.kwargs.get("style") == "Manifest.TFrame"
+        ]
+        assert len(manifest_frames) == 1
+        assert ui._manifest_card is not None
+
+    def test_footer_flows_after_manifest_and_logs_action_is_tertiary(self, ui):
+        """Footer actions should stay compact instead of pinning to the window floor."""
+        ui._footer_frame.pack.assert_any_call(fill="x")
+        assert not any(
+            call.kwargs.get("side") == "bottom"
+            for call in ui._footer_frame.pack.call_args_list
+        )
+        logs_calls = [
+            call
+            for call in ui._test_ttk_button_class.call_args_list
+            if call.kwargs.get("text") == "Open logs"
+        ]
+        assert len(logs_calls) == 1
+        assert logs_calls[0].kwargs["style"] == "Tertiary.TButton"
+
     def test_processing_mode_uses_danger_style_then_restores_manifest_action(self, ui):
         """Cancel state and normal print state should each use readable ttk styling."""
         ui.print_btn = MagicMock()
@@ -286,21 +340,23 @@ class TestScheduleAppUI:
         assert summary == "Templates configured\nTest Printer"
         assert "C:/Templates" not in summary
 
-    def test_setup_change_toggle_preserves_configured_values(self, ui):
-        """Opening setup details should not rewrite folder or printer values."""
-        ui._setup_details = MagicMock()
-        ui._setup_expanded = False
+    def test_setup_dialog_preserves_main_layout_and_configured_values(self, ui):
+        """Setup should open separately instead of expanding the main work surface."""
+        dialog = ui._setup_dialog
+        dialog.reset_mock()
         before = (
             ui.get_day_folder(),
             ui.get_night_folder(),
             ui.get_printer_name(),
         )
 
-        ui._toggle_setup_details()
-        ui._toggle_setup_details()
+        ui._show_setup_dialog()
+        ui._hide_setup_dialog()
 
-        assert ui._setup_details.pack.call_count == 1
-        ui._setup_details.pack_forget.assert_called_once()
+        dialog.deiconify.assert_called_once()
+        dialog.lift.assert_called_once()
+        dialog.focus_force.assert_called_once()
+        dialog.withdraw.assert_called_once()
         assert (
             ui.get_day_folder(),
             ui.get_night_folder(),

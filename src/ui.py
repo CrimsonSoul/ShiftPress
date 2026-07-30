@@ -224,8 +224,10 @@ class ScheduleAppUI:
         self.printer_var: Optional[tk.StringVar] = None
         self.setup_summary_label: Optional[ttk.Label] = None
         self._setup_details: Optional[ttk.Frame] = None
+        self._setup_dialog: Optional[tk.Toplevel] = None
         self._setup_toggle_btn: Optional[ttk.Button] = None
-        self._setup_expanded = False
+        self._manifest_card: Optional[ttk.Frame] = None
+        self._footer_frame: Optional[ttk.Frame] = None
         self.manifest_title_label: Optional[ttk.Label] = None
         self.manifest_label: Optional[ttk.Label] = None
         self.status_label: Optional[ttk.Label] = None
@@ -276,44 +278,42 @@ class ScheduleAppUI:
             font=FONTS.sub,
         )
 
-        # Card frames (LabelFrame)
+        # Native card shells avoid LabelFrame's platform-specific title patches.
+        for style_name, border_color in (
+            ("SetupCard.TFrame", COLORS.border),
+            ("NightCard.TFrame", COLORS.accent),
+            ("DayCard.TFrame", COLORS.day_accent),
+            ("Manifest.TFrame", COLORS.border),
+            ("DialogCard.TFrame", COLORS.border),
+        ):
+            self.style.configure(
+                style_name,
+                background=COLORS.surface,
+                bordercolor=border_color,
+                borderwidth=1,
+                relief="solid",
+            )
         self.style.configure(
-            "TLabelframe",
-            background=COLORS.surface,
-            foreground=COLORS.accent,
-            bordercolor=COLORS.border,
-            borderwidth=1,
-        )
-        self.style.configure(
-            "TLabelframe.Label",
+            "SetupTitle.TLabel",
             background=COLORS.background,
             foreground=COLORS.accent,
             font=FONTS.card_title,
         )
         self.style.configure(
-            "Night.TLabelframe",
-            background=COLORS.surface,
-            bordercolor=COLORS.accent,
-            borderwidth=1,
-        )
-        self.style.configure(
-            "Night.TLabelframe.Label",
+            "NightTitle.TLabel",
             background=COLORS.background,
             foreground=COLORS.accent,
             font=FONTS.card_title,
         )
         self.style.configure(
-            "Day.TLabelframe",
-            background=COLORS.surface,
-            bordercolor=COLORS.day_accent,
-            borderwidth=1,
-        )
-        self.style.configure(
-            "Day.TLabelframe.Label",
+            "DayTitle.TLabel",
             background=COLORS.background,
             foreground=COLORS.day_accent,
             font=FONTS.card_title,
         )
+        self.style.configure("SetupHeader.TSeparator", background=COLORS.border)
+        self.style.configure("NightHeader.TSeparator", background=COLORS.accent)
+        self.style.configure("DayHeader.TSeparator", background=COLORS.day_accent)
 
         # Inputs
         self.style.configure(
@@ -372,6 +372,25 @@ class ScheduleAppUI:
                 ("active", COLORS.secondary),
             ],
             foreground=[("disabled", COLORS.text_dim)],
+        )
+        self.style.configure(
+            "Tertiary.TButton",
+            background=COLORS.background,
+            foreground=COLORS.text_dim,
+            borderwidth=0,
+            font=FONTS.sub,
+            padding=(6, 2),
+        )
+        self.style.map(
+            "Tertiary.TButton",
+            background=[
+                ("pressed", COLORS.background),
+                ("active", COLORS.background),
+            ],
+            foreground=[
+                ("pressed", COLORS.text_main),
+                ("active", COLORS.text_main),
+            ],
         )
         self.style.configure(
             "Primary.TButton",
@@ -659,10 +678,39 @@ class ScheduleAppUI:
             style="Sub.TLabel",
         ).pack(anchor="w", pady=(6, 0))
 
+    def _create_titled_card(
+        self,
+        parent: ttk.Frame,
+        title: str,
+        style_prefix: str,
+        padding: int,
+    ) -> tuple[ttk.Frame, ttk.Frame]:
+        """Create a native card with a clean title and thin accent rule."""
+        shell = ttk.Frame(parent)
+        title_row = ttk.Frame(shell)
+        title_row.pack(fill="x")
+        ttk.Label(
+            title_row,
+            text=title,
+            style=f"{style_prefix}Title.TLabel",
+        ).pack(side="left")
+        ttk.Separator(
+            title_row,
+            style=f"{style_prefix}Header.TSeparator",
+        ).pack(side="left", fill="x", expand=True, padx=(8, 0))
+
+        card = ttk.Frame(
+            shell,
+            style=f"{style_prefix}Card.TFrame",
+            padding=str(padding),
+        )
+        card.pack(fill="both", expand=True)
+        return shell, card
+
     def _create_setup_card(self, parent: ttk.Frame) -> None:
-        """Create a summarized setup card with on-demand configuration."""
-        card = ttk.LabelFrame(parent, text=" Setup ", padding="18")
-        card.pack(fill="x", pady=(0, 16))
+        """Create a setup summary whose details open in a separate dialog."""
+        shell, card = self._create_titled_card(parent, "Setup", "Setup", 18)
+        shell.pack(fill="x", pady=(0, 16))
 
         summary_row = ttk.Frame(card, style="Card.TFrame")
         summary_row.pack(fill="x")
@@ -676,12 +724,39 @@ class ScheduleAppUI:
         self._setup_toggle_btn = ttk.Button(
             summary_row,
             text="Change…",
-            command=self._toggle_setup_details,
+            command=self._show_setup_dialog,
             width=12,
         )
         self._setup_toggle_btn.pack(side="right", padx=(18, 0))
 
-        self._setup_details = ttk.Frame(card, style="Card.TFrame")
+        self._create_setup_dialog()
+        self.refresh_setup_summary()
+
+    def _create_setup_dialog(self) -> None:
+        """Build the withdrawn setup dialog without changing the main layout."""
+        dialog = tk.Toplevel(self.root)
+        self._setup_dialog = dialog
+        dialog.withdraw()
+        dialog.title("ShiftPress Setup")
+        dialog.configure(bg=COLORS.background)
+        dialog.resizable(True, False)
+        dialog.protocol("WM_DELETE_WINDOW", self._hide_setup_dialog)
+
+        canvas = ttk.Frame(dialog, padding="24")
+        canvas.pack(fill="both", expand=True)
+        ttk.Label(canvas, text="Setup", style="Header.TLabel").pack(anchor="w")
+        ttk.Label(
+            canvas,
+            text="Choose the template folders and printer used for print runs.",
+            style="Sub.TLabel",
+        ).pack(anchor="w", pady=(4, 18))
+
+        self._setup_details = ttk.Frame(
+            canvas,
+            style="DialogCard.TFrame",
+            padding="18",
+        )
+        self._setup_details.pack(fill="both", expand=True)
 
         self.day_entry = self._create_path_row(self._setup_details, "Day Templates", "")
         self.night_entry = self._create_path_row(
@@ -691,22 +766,43 @@ class ScheduleAppUI:
         _setup_placeholder(self.day_entry, _PATH_PLACEHOLDER)
         _setup_placeholder(self.night_entry, _PATH_PLACEHOLDER)
         self._create_printer_row(self._setup_details)
-        self.refresh_setup_summary()
+        ttk.Button(
+            canvas,
+            text="Done",
+            command=self._hide_setup_dialog,
+            width=14,
+        ).pack(anchor="e", pady=(18, 0))
 
-    def _toggle_setup_details(self) -> None:
-        """Show or hide setup controls without changing their values."""
-        if self._setup_details is None:
+    def _show_setup_dialog(self) -> None:
+        """Show setup without expanding or displacing the print work surface."""
+        if self._setup_dialog is None:
             return
-        self._setup_expanded = not self._setup_expanded
-        if self._setup_expanded:
-            self._setup_details.pack(fill="x", pady=(18, 0))
-            if self._setup_toggle_btn is not None:
-                self._setup_toggle_btn.config(text="Done")
-        else:
-            self._setup_details.pack_forget()
-            if self._setup_toggle_btn is not None:
-                self._setup_toggle_btn.config(text="Change…")
-            self.refresh_setup_summary()
+        dialog = self._setup_dialog
+        dialog.deiconify()
+        try:
+            dialog.transient(self.root)
+            dialog.update_idletasks()
+            width = max(720, dialog.winfo_reqwidth())
+            height = dialog.winfo_reqheight()
+            x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - width) // 2)
+            y = self.root.winfo_rooty() + 48
+            dialog.geometry(f"{width}x{height}+{x}+{y}")
+            dialog.grab_set()
+        except Exception as e:
+            logger.debug(f"Could not position setup dialog: {e}")
+        dialog.lift()
+        dialog.focus_force()
+
+    def _hide_setup_dialog(self) -> None:
+        """Close setup back to its compact summary."""
+        if self._setup_dialog is None:
+            return
+        self.refresh_setup_summary()
+        try:
+            self._setup_dialog.grab_release()
+        except Exception as e:
+            logger.debug(f"Could not release setup dialog: {e}")
+        self._setup_dialog.withdraw()
 
     def refresh_setup_summary(self) -> None:
         """Summarize configured templates and printer without exposing paths."""
@@ -787,15 +883,9 @@ class ScheduleAppUI:
 
         date_entry_cls = cast(Any, DateEntry)
         label = shift_type.title()
-        style_name = f"{label}.TLabelframe"
         horizontal_padding = (0, 8) if column == 0 else (8, 0)
-        card = ttk.LabelFrame(
-            parent,
-            text=f" {label} ",
-            padding="22",
-            style=style_name,
-        )
-        card.grid(row=0, column=column, sticky="nsew", padx=horizontal_padding)
+        shell, card = self._create_titled_card(parent, label, label, 22)
+        shell.grid(row=0, column=column, sticky="nsew", padx=horizontal_padding)
 
         enabled_var = tk.BooleanVar(value=True)
         mode_var = tk.StringVar(value="single")
@@ -963,7 +1053,8 @@ class ScheduleAppUI:
 
     def _create_manifest_card(self, parent: ttk.Frame) -> None:
         """Create the exact preflight-neutral print manifest summary."""
-        card = ttk.LabelFrame(parent, padding="18")
+        card = ttk.Frame(parent, style="Manifest.TFrame", padding="18")
+        self._manifest_card = card
         card.pack(fill="x", pady=(0, 16))
         self.manifest_title_label = ttk.Label(
             card,
@@ -1118,7 +1209,8 @@ class ScheduleAppUI:
     def _create_footer(self, parent: ttk.Frame) -> None:
         """Create the action footer (status, progress, button)."""
         footer = ttk.Frame(parent)
-        footer.pack(fill="x", side="bottom")
+        self._footer_frame = footer
+        footer.pack(fill="x")
         footer.grid_columnconfigure(0, weight=1)
 
         status_wrap = ttk.Frame(footer)
@@ -1132,12 +1224,12 @@ class ScheduleAppUI:
 
         open_logs_btn = ttk.Button(
             status_wrap,
-            text="Open Logs",
-            width=10,
+            text="Open logs",
+            style="Tertiary.TButton",
             command=self.open_logs_folder,
             cursor="hand2",
         )
-        open_logs_btn.pack(side="right")
+        open_logs_btn.pack(side="left", padx=(12, 0))
         _ToolTip(open_logs_btn, "Open configuration, log, and report folder")
 
         progress_row = ttk.Frame(footer)
@@ -1165,7 +1257,7 @@ class ScheduleAppUI:
             footer,
             text="Print schedules",
             style="Primary.TButton",
-            width=24,
+            width=20,
             cursor="hand2",
         )
         self.print_btn.grid(row=0, column=1, rowspan=2, sticky="nsew")
