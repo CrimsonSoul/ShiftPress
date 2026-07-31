@@ -62,4 +62,4 @@ htmlcov/
 Thumbs.db
 
 # Sonar coverage report
-coverage.lcov
+coverage.xml

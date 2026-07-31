@@ -3,9 +3,10 @@ import { readFile } from 'node:fs/promises';
 
 const { test } = process.env.VITEST ? await import('vitest') : await import('node:test');
 
-const [buildWorkflow, securityWorkflow] = await Promise.all([
+const [buildWorkflow, securityWorkflow, sonarProperties] = await Promise.all([
   readFile(new URL('../.github/workflows/build.yml', import.meta.url), 'utf8'),
   readFile(new URL('../.github/workflows/security.yml', import.meta.url), 'utf8'),
+  readFile(new URL('../sonar-project.properties', import.meta.url), 'utf8'),
 ]);
 
 function jobBlock(workflow, id) {
@@ -18,6 +19,15 @@ function jobBlock(workflow, id) {
 }
 
 const normalizeExpression = (value) => value.replaceAll(/\s+/gu, ' ').trim();
+
+function sonarProperty(name) {
+  const prefix = `${name}=`;
+  const matches = sonarProperties
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith(prefix));
+  assert.equal(matches.length, 1, `expected one Sonar property: ${name}`);
+  return matches[0].slice(prefix.length);
+}
 
 test('test pull requests emit stable build gates without weakening Windows packaging', () => {
   assert.match(buildWorkflow, /pull_request:\s*\n\s+branches:\s*\n\s+- main\s*\n\s+- test/u);
@@ -49,6 +59,15 @@ test('scanner jobs retain stable required names and bounded direct entrypoints',
   assert.match(snyk, /run: pip install -r requirements-dev\.txt/u);
   assert.match(snyk, /run: node scripts\/run-snyk-ci\.mjs/u);
   assert.doesNotMatch(securityWorkflow, /npm (?:ci|run)/u);
+});
+
+test('Sonar generates and consumes one supported Python coverage report', () => {
+  const sonar = jobBlock(securityWorkflow, 'sonarqube');
+  const generated = sonar.match(/--cov-report=xml:([A-Za-z0-9_.-]+)/u);
+
+  assert.ok(generated, 'Sonar job must generate Cobertura XML coverage');
+  assert.equal(sonarProperty('sonar.python.coverage.reportPaths'), generated[1]);
+  assert.match(generated[1], /\.xml$/u);
 });
 
 test('scanner jobs run only for internal test pull requests and merged test pushes', () => {
