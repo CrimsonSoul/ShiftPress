@@ -147,12 +147,32 @@ class TestWordProcessor:
             assert "Thursday, January 15, 2026" in calls
 
     @patch("src.word_processor.pythoncom.CoInitialize")
-    @patch("src.word_processor.win32_client.Dispatch")
-    def test_initialize_success(self, mock_dispatch, mock_coinit):
-        """Initialize should set up COM correctly."""
-        # Create a fresh WordProcessor without the fixture's patches
+    @patch("src.word_processor.win32_client.DispatchEx", create=True)
+    def test_initialize_prefers_a_dedicated_word_process(
+        self, mock_dispatch_ex, mock_coinit
+    ):
+        """DispatchEx is the production path: it avoids attaching to the
+        operator's own interactive Word session."""
+        # initialize() only takes this branch when the callable comes from
+        # win32com, which is how it behaves on a real Windows machine.
+        mock_dispatch_ex.__module__ = "win32com.client"
+
         wp = WordProcessor()
         wp.initialize()
+
+        assert wp._initialized is True
+        assert wp.word_app is not None
+        mock_coinit.assert_called_once()
+        mock_dispatch_ex.assert_called_once_with("Word.Application")
+
+    @patch("src.word_processor.pythoncom.CoInitialize")
+    @patch("src.word_processor.win32_client.Dispatch")
+    @patch("src.word_processor.win32_client.DispatchEx", new=None, create=True)
+    def test_initialize_falls_back_to_dispatch(self, mock_dispatch, mock_coinit):
+        """Builds without DispatchEx must still start Word."""
+        wp = WordProcessor()
+        wp.initialize()
+
         assert wp._initialized is True
         assert wp.word_app is not None
         mock_coinit.assert_called_once()
@@ -264,6 +284,7 @@ class TestWordProcessor:
 
     @patch("src.word_processor.pythoncom.CoInitialize")
     @patch("src.word_processor.win32_client.Dispatch")
+    @patch("src.word_processor.win32_client.DispatchEx", new=None, create=True)
     def test_context_manager_enter_exit(self, mock_dispatch, mock_coinit):
         """Context manager should initialize on enter and shutdown on exit."""
         wp = WordProcessor()
