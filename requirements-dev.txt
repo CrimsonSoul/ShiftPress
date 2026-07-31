@@ -6,6 +6,9 @@
 # Build tools
 pyinstaller>=6.19.0
 
+# Icon generation and icon asset tests (not needed at runtime)
+pillow>=12.3.0
+
 # Testing
 pytest>=9.0.2
 pytest-cov>=7.0.0
