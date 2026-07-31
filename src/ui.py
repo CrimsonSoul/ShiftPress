@@ -77,7 +77,7 @@ def _get_version() -> str:
     """Return the package version string.
 
     Returns:
-        Version string (e.g. ``"2.1.0"``), or ``""`` if unavailable.
+        Version string (e.g. ``"3.0.0"``), or ``""`` if unavailable.
     """
     global _APP_VERSION
     if _APP_VERSION is None:

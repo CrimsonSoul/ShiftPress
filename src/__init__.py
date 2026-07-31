@@ -12,7 +12,7 @@ This package provides modules for:
 - Per-user data paths (app_paths)
 """
 
-__version__ = "2.1.0"
+__version__ = "3.0.0"
 __author__ = "ShiftPrint"
 
 __all__ = ["ShiftPrintApp", "main"]
