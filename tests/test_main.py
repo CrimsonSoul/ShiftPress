@@ -185,9 +185,7 @@ class TestShiftPressApp:
         request, error = app._validate_inputs()
 
         assert request is None
-        assert (
-            error == "Invalid Day date selection: End date cannot be before start date"
-        )
+        assert error == "Day schedule: End date cannot be before start date"
 
     def test_validate_inputs_success(self, app):
         """Successful validation should return the exact independent manifest."""

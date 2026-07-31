@@ -13,7 +13,7 @@ from typing import Optional, Callable, TypedDict
 import tkinter as tk
 
 from .config import ConfigManager, AppConfig
-from .scheduler import get_english_day_name, validate_date_range
+from .scheduler import get_english_day_name
 from .constants import (
     PROGRESS_MAX,
     DEFAULT_PRINTER_LABEL,
@@ -176,14 +176,9 @@ class ShiftPressApp:
             return None, "Select at least one Night or Day schedule"
 
         for selection in enabled_selections:
-            label = selection.shift_type.title()
-            try:
-                start_date, end_date = selection.active_range()
-            except ValueError as e:
-                return None, str(e)
-            is_valid, error_msg = validate_date_range(start_date, end_date)
-            if not is_valid:
-                return None, f"Invalid {label} date selection: {error_msg}"
+            selection_error = selection.validate()
+            if selection_error:
+                return None, selection_error
 
         printer_name = (self.ui.get_printer_name() or "").strip()
         if not printer_name or printer_name == DEFAULT_PRINTER_LABEL:
