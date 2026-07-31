@@ -82,15 +82,19 @@ scope runs.
 
 ## Releases
 
-The release version is read from `__version__` in `src/__init__.py`; it is not
-entered by hand. To cut a release:
+Every push to `main` or `test` builds a Windows executable and uploads it as
+`ShiftPrint-v<version>-<commit>`, so a downloadable build always exists for the
+current commit. Pull requests run the gates only.
+
+The version is read from `__version__` in `src/__init__.py`; it is not entered
+by hand. To cut a published release:
 
 1. Bump `__version__` and commit.
-2. Run the **Build** workflow via `workflow_dispatch`, with `create_release`
-   enabled if you want a published GitHub Release.
+2. Run the **Build** workflow via `workflow_dispatch` with `create_release`
+   enabled.
 
-The build job runs only after the quality gates pass, and the tag, artifact
-name, and in-app version all come from that one value.
+The build runs only after the quality gates pass, and the tag, artifact name,
+and in-app version all come from that one value.
 
 ## Security
 

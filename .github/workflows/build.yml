@@ -80,9 +80,12 @@ jobs:
       - name: Test against real pywin32 and tkcalendar
         run: pytest --cov=src --cov-report=term-missing
 
+  # Builds on every push and merge, so a downloadable exe always exists for the
+  # current commit. Skipped on pull requests, where the gates are the point and
+  # an artifact per push to the branch would just be noise.
   build:
     needs: [quality, windows-test]
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
 
     steps:
@@ -105,6 +108,7 @@ jobs:
         run: |
           v=$(python -c "import re, pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('src/__init__.py').read_text()).group(1))")
           echo "value=$v" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Build exe
         run: >
@@ -131,15 +135,19 @@ jobs:
           Stop-Process -Id $p.Id -Force
           Write-Host "exe stayed alive through startup"
 
+      # Every push produces an artifact now, so the commit is part of the name;
+      # otherwise a list of identically-named builds is impossible to tell apart.
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ShiftPrint-v${{ steps.version.outputs.value }}
+          name: ShiftPrint-v${{ steps.version.outputs.value }}-${{ steps.version.outputs.sha }}
           path: dist/*.exe
           retention-days: 90
 
+      # Only ever on an explicit dispatch with the box ticked. On a push event
+      # `inputs` is undefined, so this is pinned to the event as well as the flag.
       - name: Create Release
-        if: inputs.create_release
+        if: github.event_name == 'workflow_dispatch' && inputs.create_release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.version.outputs.value }}
