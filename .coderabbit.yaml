@@ -1,0 +1,13 @@
+reviews:
+  request_changes_workflow: true
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 2
+    base_branches:
+      - test
+  tools:
+    github-checks:
+      enabled: true
+      timeout_ms: 900000
