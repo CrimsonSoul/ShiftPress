@@ -273,7 +273,7 @@ class ScheduleAppUI:
         # Native card shells avoid LabelFrame's platform-specific title patches.
         for style_name, border_color in (
             ("SetupCard.TFrame", COLORS.border),
-            ("NightCard.TFrame", COLORS.accent),
+            ("NightCard.TFrame", COLORS.night_accent),
             ("DayCard.TFrame", COLORS.day_accent),
             ("Manifest.TFrame", COLORS.border),
             ("DialogCard.TFrame", COLORS.border),
@@ -294,7 +294,7 @@ class ScheduleAppUI:
         self.style.configure(
             "NightTitle.TLabel",
             background=COLORS.background,
-            foreground=COLORS.accent,
+            foreground=COLORS.night_accent,
             font=FONTS.card_title,
         )
         self.style.configure(
@@ -304,7 +304,7 @@ class ScheduleAppUI:
             font=FONTS.card_title,
         )
         self.style.configure("SetupHeader.TSeparator", background=COLORS.border)
-        self.style.configure("NightHeader.TSeparator", background=COLORS.accent)
+        self.style.configure("NightHeader.TSeparator", background=COLORS.night_accent)
         self.style.configure("DayHeader.TSeparator", background=COLORS.day_accent)
 
         # Inputs
@@ -837,16 +837,24 @@ class ScheduleAppUI:
             column=1,
         )
 
-    def _calendar_kwargs(self) -> dict[str, Any]:
-        """Return the shared dark-theme calendar colors."""
+    def _calendar_kwargs(self, select_color: str) -> dict[str, Any]:
+        """Return dark-theme calendar colors keyed to one shift's identity.
+
+        Args:
+            select_color: The shift accent used to mark the selected day.
+
+        Returns:
+            Calendar option mapping to pass inline to ``DateEntry``.
+        """
         return {
-            "background": COLORS.surface,
+            "background": COLORS.background,
             "foreground": COLORS.text_main,
             "bordercolor": COLORS.border,
             "headersbackground": COLORS.background,
             "headersforeground": COLORS.text_dim,
-            "selectbackground": COLORS.accent,
-            "selectforeground": COLORS.text_main,
+            # Dark ink on the accent: near-white on amber measures 1.69:1.
+            "selectbackground": select_color,
+            "selectforeground": COLORS.background,
             "normalbackground": COLORS.surface,
             "normalforeground": COLORS.text_main,
             "weekendbackground": COLORS.surface,
@@ -855,6 +863,13 @@ class ScheduleAppUI:
             "othermonthforeground": COLORS.text_dim,
             "othermonthwebackground": COLORS.background,
             "othermonthweforeground": COLORS.text_dim,
+            "disabledbackground": COLORS.surface,
+            "disabledforeground": COLORS.border,
+            "disableddaybackground": COLORS.surface,
+            "disableddayforeground": COLORS.border,
+            # ISO week numbers are noise for a print-run date choice.
+            "showweeknumbers": False,
+            "firstweekday": "sunday",
         }
 
     def _create_shift_panel(
@@ -876,6 +891,8 @@ class ScheduleAppUI:
 
         date_entry_cls = cast(Any, DateEntry)
         label = shift_type.title()
+        accent = COLORS.night_accent if shift_type == "night" else COLORS.day_accent
+        calendar_kw = self._calendar_kwargs(accent)
         horizontal_padding = (0, 8) if column == 0 else (8, 0)
         shell, card = self._create_titled_card(parent, label, label, 22)
         shell.grid(row=0, column=column, sticky="nsew", padx=horizontal_padding)
@@ -930,7 +947,7 @@ class ScheduleAppUI:
         single_picker = self._create_date_entry(
             date_entry_cls,
             single_wrap,
-            calendar_kw=self._calendar_kwargs(),
+            calendar_kw=calendar_kw,
         )
         single_picker.pack(fill="x")
         single_picker.set_date(default_date)
@@ -948,7 +965,7 @@ class ScheduleAppUI:
         range_start_picker = self._create_date_entry(
             date_entry_cls,
             range_start_wrap,
-            calendar_kw=self._calendar_kwargs(),
+            calendar_kw=calendar_kw,
         )
         range_start_picker.pack(fill="x")
         range_start_picker.set_date(default_date)
@@ -961,7 +978,7 @@ class ScheduleAppUI:
         range_end_picker = self._create_date_entry(
             date_entry_cls,
             range_end_wrap,
-            calendar_kw=self._calendar_kwargs(),
+            calendar_kw=calendar_kw,
         )
         range_end_picker.pack(fill="x")
         range_end_picker.set_date(default_date)
@@ -1085,18 +1102,9 @@ class ScheduleAppUI:
             A ``DateEntry`` widget instance.
         """
 
-        # Prefer using ttk styling for the entry itself.
-        try:
-            return date_entry_cls(
-                parent,
-                style="DateEntry",
-                date_pattern="mm/dd/yyyy",
-                calendar_kw=calendar_kw,
-            )
-        except TypeError as e:
-            logger.debug(f"DateEntry calendar_kw not supported, falling back: {e}")
-
-        # Older builds may not support calendar_kw; try passing common color keys directly.
+        # Inline options are the working path: tkcalendar accepts an unknown
+        # calendar_kw= without raising, so that form silently drops every
+        # colour and leaves the popup in its default light theme.
         try:
             return date_entry_cls(
                 parent,
@@ -1106,6 +1114,17 @@ class ScheduleAppUI:
             )
         except TypeError as e:
             logger.debug(f"DateEntry inline calendar kwargs not supported: {e}")
+
+        # Builds that reject an inline option may accept the nested form.
+        try:
+            return date_entry_cls(
+                parent,
+                style="DateEntry",
+                date_pattern="mm/dd/yyyy",
+                calendar_kw=calendar_kw,
+            )
+        except TypeError as e:
+            logger.debug(f"DateEntry calendar_kw not supported: {e}")
             return date_entry_cls(
                 parent,
                 style="DateEntry",

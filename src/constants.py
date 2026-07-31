@@ -127,8 +127,9 @@ class Colors:
     background: str = "#16171A"  # Window charcoal
     surface: str = "#24262A"  # Raised graphite work surface
     input: str = "#1B1C20"  # Recessed native input surface
-    accent: str = "#F2B340"  # Press amber
-    day_accent: str = "#38BDF8"  # Sky-400 — Day shift identity
+    accent: str = "#F2B340"  # Press amber — Setup title and selection chrome
+    night_accent: str = "#38BDF8"  # Sky-400 — Night shift identity (night sky)
+    day_accent: str = "#F2B340"  # Press amber — Day shift identity (daylight)
     action: str = "#1267C9"  # Saturated print-action blue
     action_hover: str = "#0F56A8"  # Deeper action blue
     text_main: str = "#F4F4F5"  # Zinc-100 — warm off-white

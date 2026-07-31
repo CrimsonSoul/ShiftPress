@@ -41,9 +41,10 @@ accents for shift identity. These values are the implemented source of truth in
 
 ### Secondary
 
-- **Night Amber** `#F2B340`: Identifies Night-shift controls and status.
-- **Day Cyan** `#38BDF8`: Identifies Day-shift controls and status without
-  competing with the primary action.
+- **Night Sky** `#38BDF8`: Identifies Night-shift controls and status, and marks
+  the selected day in a Night date picker.
+- **Day Amber** `#F2B340`: Identifies Day-shift controls and status, and marks
+  the selected day in a Day date picker.
 - **Progress Green** `#4ADE80`: Indicates active progress and successful
   completion.
 - **Error Rose** `#FB7185`: Indicates validation errors and the cancel action.
@@ -60,8 +61,11 @@ accents for shift identity. These values are the implemented source of truth in
 
 ### Named Rules
 
-**The Semantic Accent Rule.** Amber and cyan identify Night and Day; saturated
-blue identifies the print action. They are not ambient decoration.
+**The Semantic Accent Rule.** Blue and amber identify Night and Day, following
+the night-sky and daylight reading an operator already carries; saturated blue
+identifies the print action. They are not ambient decoration. Night's sky blue
+is lighter and less saturated than the action blue, so shift identity never
+reads as a button.
 
 **The One Primary Action Rule.** Only the final print button receives the
 strongest filled treatment.

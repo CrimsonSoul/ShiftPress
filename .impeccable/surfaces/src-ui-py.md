@@ -33,15 +33,20 @@ remain visible. The manifest must state actual jobs and document counts.
 ## Chosen Direction
 
 Low-risk Independent Shift Sections using the approved side-by-side
-composition. Night uses written amber identity, Day uses written blue identity,
-and both share the same native control structure.
+composition. Night uses written night-sky blue identity, Day uses written
+daylight amber identity, and both share the same native control structure.
 
 ## Memorable Moment
 
 The operator can compare both selected shift scopes at once, then read one
 full-width manifest that says exactly what paper the button will produce.
 
-## Unresolved Decisions
+## Resolved Decisions
 
-Exact default window dimensions and final token values will be resolved against
-the rendered Tkinter implementation and Windows display scaling.
+Window dimensions are no longer fixed tokens. Both date modes are built to the
+same height, and geometry and minimum size are derived from Tk's computed
+requirement at launch, so the layout cannot clip its primary action under any
+Windows text-scaling setting.
+
+Shift identity resolved to night-sky blue for Night and daylight amber for Day,
+matching the sun-and-moon reading an operator already carries.

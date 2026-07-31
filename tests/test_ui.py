@@ -159,6 +159,28 @@ class TestScheduleAppUI:
             ):
                 assert picker.constructor_kwargs["style"] == "DateEntry"
 
+    def test_calendar_theme_reaches_tkcalendar_inline(self, ui):
+        """Colours must be passed inline; calendar_kw is silently ignored."""
+        kw = ui._shift_panels["night"].single_picker.constructor_kwargs
+
+        # tkcalendar swallows an unknown calendar_kw= without raising, which
+        # would leave the popup in its default light theme.
+        assert "calendar_kw" not in kw
+        assert kw["normalbackground"] == COLORS.surface
+        assert kw["normalforeground"] == COLORS.text_main
+        assert kw["headersbackground"] == COLORS.background
+        assert kw["showweeknumbers"] is False
+
+    def test_calendar_selection_is_legible_and_shift_coloured(self, ui):
+        """The selected day needs dark ink on its shift accent, not near-white."""
+        night = ui._shift_panels["night"].single_picker.constructor_kwargs
+        day = ui._shift_panels["day"].single_picker.constructor_kwargs
+
+        assert night["selectbackground"] == COLORS.night_accent
+        assert day["selectbackground"] == COLORS.day_accent
+        for kw in (night, day):
+            assert kw["selectforeground"] == COLORS.background
+
     def test_shift_selections_keep_independent_modes_and_dates(self, ui):
         """Changing Night state must not alter the Day selection."""
         night_panel = ui._shift_panels["night"]
@@ -384,7 +406,7 @@ class TestScheduleAppUI:
         """Section titles should sit on the window without LabelFrame patches."""
         for style_name, foreground in (
             ("SetupTitle.TLabel", COLORS.accent),
-            ("NightTitle.TLabel", COLORS.accent),
+            ("NightTitle.TLabel", COLORS.night_accent),
             ("DayTitle.TLabel", COLORS.day_accent),
         ):
             ui.style.configure.assert_any_call(
