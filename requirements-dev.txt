@@ -11,6 +11,8 @@ pytest>=9.0.2
 pytest-cov>=7.0.0
 
 # Code quality
+# black is pinned exactly: it fixes a stable style per calendar year, so a
+# floor would let formatting drift between contributors and CI.
 pylint>=4.0.5
-black==25.11.0
-mypy>=1.19.1
+black==26.5.1
+mypy>=2.3.0

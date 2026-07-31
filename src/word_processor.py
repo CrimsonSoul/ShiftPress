@@ -36,7 +36,6 @@ from .logger import get_logger
 from .path_validation import validate_folder_path, is_path_within_base
 from .scheduler import get_english_day_name, get_english_month_name
 
-
 logger = get_logger(__name__)
 
 
