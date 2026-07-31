@@ -12,17 +12,13 @@ ShiftPress is a Windows desktop app that batch-prints shift schedule templates v
 - Modular architecture with strong unit-test coverage and static quality gates
 - Packaged as a single-file executable for non-technical end users via PyInstaller
 
-## Preview
-
-![Main window](docs/screenshots/main.png)
-
 ## Core Features
 
 - Independent Day and Night print selections with single-date or date-range
   scope for each shift
 - Exact preflight-neutral print manifest showing the selected dates, document
   count, and printer before a run starts
-- Date replacement automation with optional header/footer-only mode
+- Date replacement across body, header, and footer story ranges
 - Template path, printer, and date-range preflight validation before any processing begins
 - Per-document retry handling for transient COM errors with structured failure logging
 - Cancelable background processing with responsive UI progress updates

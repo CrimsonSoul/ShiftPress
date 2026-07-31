@@ -47,3 +47,19 @@ and the physical printer output.
 Record the Windows version, Word version, printer name, application commit, and
 pass/fail result for each required run. A release is print-verified only after
 all four runs and the state and safety checks pass on Windows.
+
+## Refresh the README screenshot
+
+The README has no screenshot. Capture one here, where a real Windows instance
+with Microsoft Word exists:
+
+1. Launch ShiftPress with both template folders configured and a printer
+   selected.
+2. Capture the main window to `docs/screenshots/main.png`.
+3. Restore the README `## Preview` section above `## Core Features`:
+
+   ```markdown
+   ## Preview
+
+   ![Main window](docs/screenshots/main.png)
+   ```

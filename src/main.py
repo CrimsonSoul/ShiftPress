@@ -91,7 +91,8 @@ class ShiftPressApp:
         # Load and apply saved configuration
         self._load_config()
 
-        # Set up button command and keyboard shortcuts (Enter = start, Escape = cancel)
+        # Wire the print button. Enter starts a run only while the button has
+        # focus; Escape cancels from anywhere in the window.
         self.ui.set_start_command(
             self.start_processing, cancel_command=self._cancel_if_running
         )
@@ -563,7 +564,7 @@ class ShiftPressApp:
         if report_path:
             message += f"\n\nFailure report saved to:\n{report_path}"
         message += f"\n\nLog file:\n{log_path}"
-        message += "\n\nTip: Click 'Open Logs' in the app footer."
+        message += "\n\nTip: Click 'Open logs' in the app footer."
 
         self.ui.show_warning("Processing Completed with Errors", message)
 
