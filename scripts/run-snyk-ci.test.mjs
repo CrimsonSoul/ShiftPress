@@ -53,6 +53,26 @@ test('runs Open Source and Code with exact bounded repository arguments on pull 
   }
 });
 
+test('launches the Windows npm shim through the command processor', async () => {
+  const commands = [];
+  const windowsEnv = {
+    ...configuredEnv,
+    ComSpec: String.raw`C:\Windows\System32\cmd.exe`,
+  };
+
+  await runSnykCi({
+    env: windowsEnv,
+    platform: 'win32',
+    runCommand: async (command) => {
+      commands.push(command);
+      return commandResult(0);
+    },
+  });
+
+  assert.equal(commands[0].file, windowsEnv.ComSpec);
+  assert.deepEqual(commands[0].args.slice(0, 5), ['/d', '/s', '/c', 'snyk.cmd', 'test']);
+});
+
 test('adds the monitor command only after clean scans on a test-branch push', async () => {
   const commands = [];
   const result = await runSnykCi({

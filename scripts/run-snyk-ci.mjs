@@ -91,12 +91,19 @@ export const SNYK_PHASE_ARGS = Object.freeze({
   monitor: ['monitor', ...PIP_ARGS],
 });
 
-function snykCommand(env, phase, args, timeoutMs, transientOutput) {
+function snykCommand(env, platform, phase, args, timeoutMs, transientOutput) {
   const phaseArgs = SNYK_PHASE_ARGS[phase];
   if (!phaseArgs) throw configurationError(`Unknown Snyk phase: ${phase}.`);
+  const scannerArgs = [...phaseArgs, ...args];
+  const windows = platform === 'win32';
   return {
-    file: process.platform === 'win32' ? 'snyk.cmd' : 'snyk',
-    args: [...phaseArgs, ...args],
+    file:
+      windows && nonEmptyString(env.ComSpec)
+        ? env.ComSpec
+        : windows
+          ? String.raw`C:\Windows\System32\cmd.exe`
+          : 'snyk',
+    args: windows ? ['/d', '/s', '/c', 'snyk.cmd', ...scannerArgs] : scannerArgs,
     env,
     timeoutMs,
     maxOutputBytes: MAX_OUTPUT_BYTES,
@@ -119,8 +126,10 @@ function phaseTimeout(deadline, now, label) {
   return Math.min(COMMAND_TIMEOUT_MS, remaining);
 }
 
-async function runPhase({ env, runCommand, phase, args, policy, label, timeoutMs }) {
-  const result = await runCommand(snykCommand(env, phase, args, timeoutMs, policy.transientOutput));
+async function runPhase({ env, platform, runCommand, phase, args, policy, label, timeoutMs }) {
+  const result = await runCommand(
+    snykCommand(env, platform, phase, args, timeoutMs, policy.transientOutput),
+  );
   const outcome = classifyCommandResult(result, policy);
   if (outcome === SCANNER_OUTCOME.CLEAN) return;
   if (outcome === SCANNER_OUTCOME.FINDING) {
@@ -146,6 +155,7 @@ export async function runSnykCi({
   runCommand = runBoundedCommand,
   reportUnavailable = writeUnavailableReport,
   now = monotonicNow,
+  platform = process.platform,
 } = {}) {
   try {
     if (typeof now !== 'function') throw configurationError('Snyk CI timing function is invalid.');
@@ -154,6 +164,7 @@ export async function runSnykCi({
     const projectArgs = repositoryArguments(env, serverUrl);
     await runPhase({
       env,
+      platform,
       runCommand,
       phase: 'open-source',
       args: projectArgs,
@@ -163,6 +174,7 @@ export async function runSnykCi({
     });
     await runPhase({
       env,
+      platform,
       runCommand,
       phase: 'code',
       args: [`--org=${env.SNYK_ORG}`],
@@ -173,6 +185,7 @@ export async function runSnykCi({
     if (testPush) {
       await runPhase({
         env,
+        platform,
         runCommand,
         phase: 'monitor',
         args: projectArgs,
