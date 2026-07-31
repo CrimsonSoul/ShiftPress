@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .constants import CONFIG_FILENAME
-from .app_paths import get_data_dir
+from .app_paths import get_data_dir, get_legacy_data_dir
 from .logger import get_logger
 
 __all__ = ["AppConfig", "ConfigManager"]
@@ -67,12 +67,58 @@ class ConfigManager:
                 directory / CONFIG_FILENAME, i.e. ``%APPDATA%`` on Windows)
         """
         self._legacy_config_path = Path(CONFIG_FILENAME).resolve()
+        self._legacy_data_config_path = get_legacy_data_dir() / CONFIG_FILENAME
         self._allow_legacy_migration = config_path is None
         if config_path:
             self.config_path = Path(config_path)
         else:
             self.config_path = get_data_dir() / CONFIG_FILENAME
         self._config: Optional[AppConfig] = None
+
+    def _legacy_paths(self) -> tuple[Path, ...]:
+        """Older config locations to check, most recent first."""
+        return (self._legacy_data_config_path, self._legacy_config_path)
+
+    def _migrate_from(self, legacy_path: Path) -> Optional[AppConfig]:
+        """Adopt a config from an older location.
+
+        Args:
+            legacy_path: Candidate config file from a previous app version.
+
+        Returns:
+            The migrated config, or ``None`` when *legacy_path* is absent or
+            unreadable.  A failed migration must never stop the app starting.
+        """
+        if not legacy_path.exists():
+            return None
+
+        try:
+            with open(legacy_path, "r", encoding="utf-8") as f:
+                config = AppConfig.from_dict(json.load(f))
+        except Exception as e:
+            logger.warning(f"Could not load legacy config at {legacy_path}: {e}")
+            return None
+
+        logger.info(
+            f"Configuration loaded from legacy path {legacy_path}; "
+            f"migrating to {self.config_path}"
+        )
+        try:
+            self.save(config)
+        except Exception as e:
+            logger.warning(
+                f"Could not migrate legacy config to {self.config_path}: {e}"
+            )
+
+        # Rename so the next launch does not migrate over a newer edit.
+        try:
+            migrated = legacy_path.with_suffix(".json.migrated")
+            legacy_path.rename(migrated)
+            logger.info(f"Legacy config renamed to {migrated}")
+        except Exception as e:
+            logger.debug(f"Could not rename legacy config: {e}")
+
+        return config
 
     def load(self) -> AppConfig:
         """
@@ -88,36 +134,14 @@ class ConfigManager:
             IOError: If the primary config file exists but cannot be read.
         """
         if not self.config_path.exists():
-            # Backward-compatibility: older versions stored config.json in the working directory.
-            if self._allow_legacy_migration and self._legacy_config_path.exists():
-                try:
-                    with open(self._legacy_config_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        self._config = AppConfig.from_dict(data)
-                        logger.info(
-                            f"Configuration loaded from legacy path {self._legacy_config_path}; "
-                            f"migrating to {self.config_path}"
-                        )
-                    try:
-                        self.save(self._config)
-                    except Exception as e:
-                        logger.warning(
-                            f"Could not migrate legacy config to {self.config_path}: {e}"
-                        )
-                    # Rename old file so it doesn't get picked up on the next launch.
-                    try:
-                        migrated = self._legacy_config_path.with_suffix(
-                            ".json.migrated"
-                        )
-                        self._legacy_config_path.rename(migrated)
-                        logger.info(f"Legacy config renamed to {migrated}")
-                    except Exception as e:
-                        logger.debug(f"Could not rename legacy config: {e}")
-                    return self._config
-                except Exception as e:
-                    logger.warning(
-                        f"Could not load legacy config at {self._legacy_config_path}: {e}"
-                    )
+            # Backward-compatibility: earlier versions stored config under the
+            # ShiftPress data directory, and older ones in the working directory.
+            if self._allow_legacy_migration:
+                for legacy_path in self._legacy_paths():
+                    migrated = self._migrate_from(legacy_path)
+                    if migrated is not None:
+                        self._config = migrated
+                        return self._config
 
             logger.info(f"Config file not found at {self.config_path}, using defaults")
             self._config = AppConfig()

@@ -211,3 +211,78 @@ class TestConfigManager:
             assert migrated.exists()
         finally:
             os.chdir(old_cwd)
+
+
+class TestPreRenameMigration:
+    """Config saved under the old ShiftPress data directory must survive."""
+
+    def test_migrates_config_from_pre_rename_data_dir(self, tmp_path):
+        """An operator upgrading from ShiftPress keeps their saved setup."""
+        legacy_dir = tmp_path / "legacy"
+        legacy_dir.mkdir()
+        (legacy_dir / "config.json").write_text(
+            json.dumps({"day_folder": "/old/day", "printer_name": "OldPrinter"})
+        )
+
+        manager = ConfigManager()
+        manager.config_path = tmp_path / "current" / "config.json"
+        manager._legacy_data_config_path = legacy_dir / "config.json"
+        manager._legacy_config_path = tmp_path / "nonexistent-cwd" / "config.json"
+        manager._allow_legacy_migration = True
+
+        config = manager.load()
+
+        assert config.day_folder == "/old/day"
+        assert config.printer_name == "OldPrinter"
+        assert manager.config_path.exists()
+
+    def test_pre_rename_config_is_renamed_after_migration(self, tmp_path):
+        """The old file must not be re-migrated over a later edit."""
+        legacy_dir = tmp_path / "legacy"
+        legacy_dir.mkdir()
+        legacy_file = legacy_dir / "config.json"
+        legacy_file.write_text(json.dumps({"day_folder": "/old/day"}))
+
+        manager = ConfigManager()
+        manager.config_path = tmp_path / "current" / "config.json"
+        manager._legacy_data_config_path = legacy_file
+        manager._legacy_config_path = tmp_path / "nonexistent-cwd" / "config.json"
+        manager._allow_legacy_migration = True
+
+        manager.load()
+
+        assert not legacy_file.exists()
+        assert (legacy_dir / "config.json.migrated").exists()
+
+    def test_existing_config_wins_over_pre_rename_one(self, tmp_path):
+        """Migration must never overwrite a config the operator already has."""
+        legacy_dir = tmp_path / "legacy"
+        legacy_dir.mkdir()
+        (legacy_dir / "config.json").write_text(json.dumps({"day_folder": "/old/day"}))
+        new_dir = tmp_path / "current"
+        new_dir.mkdir()
+        (new_dir / "config.json").write_text(json.dumps({"day_folder": "/current/day"}))
+
+        manager = ConfigManager()
+        manager.config_path = new_dir / "config.json"
+        manager._legacy_data_config_path = legacy_dir / "config.json"
+        manager._allow_legacy_migration = True
+
+        assert manager.load().day_folder == "/current/day"
+
+    def test_unreadable_pre_rename_config_falls_back_to_defaults(self, tmp_path):
+        """A corrupt old config must not stop the app from starting."""
+        legacy_dir = tmp_path / "legacy"
+        legacy_dir.mkdir()
+        (legacy_dir / "config.json").write_text("{ not valid json")
+
+        manager = ConfigManager()
+        manager.config_path = tmp_path / "current" / "config.json"
+        manager._legacy_data_config_path = legacy_dir / "config.json"
+        manager._legacy_config_path = tmp_path / "nonexistent-cwd" / "config.json"
+        manager._allow_legacy_migration = True
+
+        config = manager.load()
+
+        assert config.day_folder == ""
+        assert config.printer_name == ""
