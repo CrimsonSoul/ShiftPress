@@ -214,10 +214,10 @@ class TestConfigManager:
 
 
 class TestPreRenameMigration:
-    """Config saved under the old ShiftPress data directory must survive."""
+    """Config saved under the old ShiftPrint data directory must survive."""
 
     def test_migrates_config_from_pre_rename_data_dir(self, tmp_path):
-        """An operator upgrading from ShiftPress keeps their saved setup."""
+        """An operator upgrading from ShiftPrint keeps their saved setup."""
         legacy_dir = tmp_path / "legacy"
         legacy_dir.mkdir()
         (legacy_dir / "config.json").write_text(

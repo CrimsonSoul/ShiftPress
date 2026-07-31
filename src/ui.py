@@ -1,5 +1,5 @@
 """
-UI components for ShiftPress application.
+UI components for ShiftPrint application.
 
 This module contains all Tkinter UI components and styling.
 """
@@ -185,7 +185,7 @@ def _setup_placeholder(entry: ttk.Entry, placeholder: str) -> None:
 
 
 class ScheduleAppUI:
-    """Main UI class for the ShiftPress application."""
+    """Main UI class for the ShiftPrint application."""
 
     def __init__(self, root: tk.Tk, today: Optional[date] = None):
         """
@@ -196,7 +196,7 @@ class ScheduleAppUI:
             today: Optional deterministic date used for launch defaults.
         """
         self.root = root
-        self.root.title("ShiftPress")
+        self.root.title("ShiftPrint")
         self.root.resizable(WINDOW_RESIZABLE, WINDOW_RESIZABLE)
         self.root.configure(bg=COLORS.background)
         self._today = today or date.today()
@@ -661,7 +661,7 @@ class ScheduleAppUI:
         if version:
             ttk.Label(
                 title_row,
-                text=f"ShiftPress  ·  v{version}",
+                text=f"ShiftPrint  ·  v{version}",
                 style="Sub.TLabel",
             ).pack(side="right", anchor="s", pady=(0, 5))
 
@@ -730,7 +730,7 @@ class ScheduleAppUI:
         dialog = tk.Toplevel(self.root)
         self._setup_dialog = dialog
         dialog.withdraw()
-        dialog.title("ShiftPress Setup")
+        dialog.title("ShiftPrint Setup")
         dialog.configure(bg=COLORS.background)
         dialog.resizable(True, False)
         dialog.protocol("WM_DELETE_WINDOW", self._hide_setup_dialog)

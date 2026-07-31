@@ -12,7 +12,7 @@ import pytest
 
 # Import the class directly, then grab the actual module from sys.modules
 # (src.main as a name is shadowed by the main() function exported in src.__init__.py)
-from src.main import ShiftPressApp, _BatchRequest
+from src.main import ShiftPrintApp, _BatchRequest
 from src.print_manifest import PrintJob, ShiftSelection
 
 main_module = sys.modules["src.main"]
@@ -28,19 +28,19 @@ def _request(*jobs: PrintJob) -> _BatchRequest:
     )
 
 
-def _run_scheduled_callbacks(app: ShiftPressApp) -> None:
+def _run_scheduled_callbacks(app: ShiftPrintApp) -> None:
     """Execute callbacks captured by the mocked Tk root."""
     for call in app.root.after.call_args_list:
         callback = call.args[1]
         callback()
 
 
-class TestShiftPressApp:
-    """Tests for ShiftPressApp class."""
+class TestShiftPrintApp:
+    """Tests for ShiftPrintApp class."""
 
     @pytest.fixture
     def app(self):
-        """Create a ShiftPressApp with mocked UI and dependencies."""
+        """Create a ShiftPrintApp with mocked UI and dependencies."""
         with patch.object(main_module, "ScheduleAppUI") as MockUI, patch.object(
             main_module, "ConfigManager"
         ) as MockConfig:
@@ -77,7 +77,7 @@ class TestShiftPressApp:
                 day_folder="", night_folder="", printer_name=""
             )
 
-            app = ShiftPressApp(mock_root)
+            app = ShiftPrintApp(mock_root)
             yield app
 
     def test_validate_inputs_missing_day_folder(self, app):

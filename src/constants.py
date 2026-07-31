@@ -1,5 +1,5 @@
 """
-Constants for ShiftPress application.
+Constants for ShiftPrint application.
 
 This module contains all named constants used throughout the application
 to avoid magic numbers and strings.

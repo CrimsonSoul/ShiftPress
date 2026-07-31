@@ -114,7 +114,7 @@ jobs:
           --icon=icon.ico
           --add-data "icon.ico;."
           --add-data "icon.png;."
-          --name "ShiftPress"
+          --name "ShiftPrint"
           main.py
 
       # Tier 2 trial: confirm the packaged GUI survives startup on a runner
@@ -122,10 +122,10 @@ jobs:
       - name: Smoke the built exe
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath "dist\ShiftPress.exe" -PassThru
+          $p = Start-Process -FilePath "dist\ShiftPrint.exe" -PassThru
           Start-Sleep -Seconds 20
           if ($p.HasExited) {
-            Write-Host "::error::ShiftPress.exe exited during startup with code $($p.ExitCode)"
+            Write-Host "::error::ShiftPrint.exe exited during startup with code $($p.ExitCode)"
             exit 1
           }
           Stop-Process -Id $p.Id -Force
@@ -134,7 +134,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ShiftPress-v${{ steps.version.outputs.value }}
+          name: ShiftPrint-v${{ steps.version.outputs.value }}
           path: dist/*.exe
           retention-days: 90
 

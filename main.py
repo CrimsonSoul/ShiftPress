@@ -1,7 +1,7 @@
 """
-ShiftPress - Main Entry Point
+ShiftPrint - Main Entry Point
 
-This is the main entry point for the ShiftPress application.
+This is the main entry point for the ShiftPrint application.
 All application logic has been refactored into the src package.
 """
 

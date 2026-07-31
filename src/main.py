@@ -1,5 +1,5 @@
 """
-ShiftPress - Main Application Entry Point
+ShiftPrint - Main Application Entry Point
 
 Batch print shift schedules via Word COM automation.
 """
@@ -63,7 +63,7 @@ class _BatchRequest:
     night_folder: str
 
 
-class ShiftPressApp:
+class ShiftPrintApp:
     """Main application controller.
 
     Coordinates configuration management, input validation, preflight
@@ -100,7 +100,7 @@ class ShiftPressApp:
         # Handle window close gracefully
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        logger.info("ShiftPress application initialized")
+        logger.info("ShiftPrint application initialized")
 
     def _safe_after(self, callback: Callable[[], None]) -> None:
         """Schedule a UI callback if the window is still alive.
@@ -609,11 +609,11 @@ class ShiftPressApp:
 def main() -> None:
     """Main entry point for the application."""
     setup_logging()
-    logger.info("Starting ShiftPress")
+    logger.info("Starting ShiftPrint")
 
     try:
         root = tk.Tk()
-        app = ShiftPressApp(root)
+        app = ShiftPrintApp(root)
         app.ui.run()
     except Exception as e:
         logger.exception("Fatal error in main")
@@ -631,7 +631,7 @@ def main() -> None:
         except Exception:
             print(f"Fatal error: {e}")
     finally:
-        logger.info("ShiftPress shutting down")
+        logger.info("ShiftPrint shutting down")
 
 
 if __name__ == "__main__":

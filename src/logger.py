@@ -1,5 +1,5 @@
 """
-Logging configuration for ShiftPress application.
+Logging configuration for ShiftPrint application.
 
 This module sets up the logging system with both file and console handlers.
 """
@@ -56,7 +56,7 @@ def setup_logging(
 
     # Remove only handlers previously added by this module to avoid
     # destroying third-party or test-framework handlers.
-    _TAG = "_shiftpress"
+    _TAG = "_shiftprint"
     for h in root_logger.handlers[:]:
         if getattr(h, _TAG, False):
             root_logger.removeHandler(h)
@@ -98,9 +98,9 @@ def get_logger(name: Optional[str] = None) -> logging.Logger:
     Get a logger instance.
 
     Args:
-        name: Logger name (default: "shiftpress")
+        name: Logger name (default: "shiftprint")
 
     Returns:
         Logger instance
     """
-    return logging.getLogger(name or "shiftpress")
+    return logging.getLogger(name or "shiftprint")

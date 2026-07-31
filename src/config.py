@@ -1,5 +1,5 @@
 """
-Configuration management for ShiftPress application.
+Configuration management for ShiftPrint application.
 
 This module handles loading, saving, and validating configuration settings.
 """
@@ -135,7 +135,7 @@ class ConfigManager:
         """
         if not self.config_path.exists():
             # Backward-compatibility: earlier versions stored config under the
-            # ShiftPress data directory, and older ones in the working directory.
+            # ShiftPrint data directory, and older ones in the working directory.
             if self._allow_legacy_migration:
                 for legacy_path in self._legacy_paths():
                     migrated = self._migrate_from(legacy_path)

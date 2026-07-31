@@ -1,5 +1,5 @@
 """
-Word document processing for ShiftPress application.
+Word document processing for ShiftPrint application.
 
 This module handles all interactions with Microsoft Word via COM automation,
 including document opening, date replacement, and printing.

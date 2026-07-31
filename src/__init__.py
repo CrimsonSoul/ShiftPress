@@ -1,5 +1,5 @@
 """
-ShiftPress - Batch print shift schedules via Word COM automation.
+ShiftPrint - Batch print shift schedules via Word COM automation.
 
 This package provides modules for:
 - Configuration management (config)
@@ -13,9 +13,9 @@ This package provides modules for:
 """
 
 __version__ = "2.1.0"
-__author__ = "ShiftPress"
+__author__ = "ShiftPrint"
 
-__all__ = ["ShiftPressApp", "main"]
+__all__ = ["ShiftPrintApp", "main"]
 
 
 def __getattr__(name: str) -> object:
@@ -25,16 +25,16 @@ def __getattr__(name: str) -> object:
         name: The attribute name being looked up.
 
     Returns:
-        The requested module-level symbol (``ShiftPressApp`` or ``main``).
+        The requested module-level symbol (``ShiftPrintApp`` or ``main``).
 
     Raises:
         AttributeError: If *name* is not a public symbol of this package.
     """
 
-    if name in ("ShiftPressApp", "main"):
-        from .main import ShiftPressApp, main  # noqa: F811
+    if name in ("ShiftPrintApp", "main"):
+        from .main import ShiftPrintApp, main  # noqa: F811
 
-        globals()["ShiftPressApp"] = ShiftPressApp
+        globals()["ShiftPrintApp"] = ShiftPrintApp
         globals()["main"] = main
         return globals()[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

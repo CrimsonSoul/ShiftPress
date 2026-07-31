@@ -1,5 +1,5 @@
 @echo off
-echo Starting ShiftPress...
+echo Starting ShiftPrint...
 
 REM Check if virtual environment exists
 if not exist ".venv" (
@@ -17,6 +17,6 @@ python main.py
 REM If application crashed, pause to see error
 if errorlevel 1 (
     echo.
-    echo Application exited with an error. Check %%APPDATA%%\ShiftPress\shiftpress.log for details.
+    echo Application exited with an error. Check %%APPDATA%%\ShiftPrint\shiftprint.log for details.
     pause
 )
