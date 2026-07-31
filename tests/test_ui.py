@@ -159,6 +159,30 @@ class TestScheduleAppUI:
             ):
                 assert picker.constructor_kwargs["style"] == "DateEntry"
 
+    def test_date_fields_are_pick_only(self, ui):
+        """Typed dates can be silently wrong, so the field must not be editable."""
+        panel = ui._shift_panels["night"]
+        panel.enabled_var.set(True)
+
+        ui._sync_shift_panel_state("night")
+
+        for picker in (
+            panel.single_picker,
+            panel.range_start_picker,
+            panel.range_end_picker,
+        ):
+            picker.config.assert_called_with(state="readonly")
+        # Radios stay ordinary controls.
+        panel.single_radio.config.assert_called_with(state="normal")
+
+    def test_date_fields_open_the_calendar_on_click_and_key(self, ui):
+        """A pick-only field must still be openable by mouse and keyboard."""
+        picker = ui._shift_panels["night"].single_picker
+        bound = {call.args[0] for call in picker.bind.call_args_list if call.args}
+
+        assert "<Button-1>" in bound
+        assert "<Down>" in bound
+
     def test_calendar_theme_reaches_tkcalendar_inline(self, ui):
         """Colours must be passed inline; calendar_kw is silently ignored."""
         kw = ui._shift_panels["night"].single_picker.constructor_kwargs

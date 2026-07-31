@@ -1018,7 +1018,29 @@ class ScheduleAppUI:
             "<<DateEntrySelected>>",
             lambda _event, selected=shift_type: self._on_shift_date_selected(selected),
         )
+        for picker in (single_picker, range_start_picker, range_end_picker):
+            self._bind_pick_only(picker)
         self._sync_shift_panel_state(shift_type)
+
+    def _bind_pick_only(self, picker: Any) -> None:
+        """Open the calendar on click or key, since the field is not typable.
+
+        Args:
+            picker: The ``DateEntry`` to make pick-only.
+        """
+
+        def open_calendar(_event: Any = None) -> str:
+            try:
+                if "disabled" not in picker.state():
+                    picker.drop_down()
+            except Exception as e:
+                logger.debug(f"Could not open calendar: {e}")
+            return "break"
+
+        # Mouse anywhere in the field, plus the keyboard affordances a
+        # readonly field would otherwise lose.
+        for sequence in ("<Button-1>", "<Down>", "<space>", "<Return>"):
+            picker.bind(sequence, open_calendar, add="+")
 
     def _on_shift_date_selected(self, shift_type: ShiftType) -> None:
         """Refresh visible intent after a shift date changes."""
@@ -1042,15 +1064,21 @@ class ScheduleAppUI:
         panel = self._shift_panels[shift_type]
         enabled = bool(panel.enabled_var.get()) and self._inputs_enabled
         state: Literal["normal", "disabled"] = "normal" if enabled else "disabled"
+        # Dates are pick-only: a typed value can be silently wrong (mm/dd read
+        # as dd/mm), and unparseable text makes tkcalendar report the previous
+        # date while the box shows something else.
+        picker_state: Literal["readonly", "disabled"] = (
+            "readonly" if enabled else "disabled"
+        )
 
-        for widget in (
-            panel.single_radio,
-            panel.range_radio,
+        for widget in (panel.single_radio, panel.range_radio):
+            widget.config(state=state)
+        for picker in (
             panel.single_picker,
             panel.range_start_picker,
             panel.range_end_picker,
         ):
-            widget.config(state=state)
+            picker.config(state=picker_state)
 
         if panel.mode_var.get() == "range":
             panel.single_wrap.grid_remove()
