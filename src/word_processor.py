@@ -258,7 +258,16 @@ class WordProcessor:
                 return func(*args)
             except Exception as e:
                 error_str = str(e).lower()
-                transient_keywords = ("rejected", "call was rejected", "busy", "server")
+                # Specific transient COM markers only.  A bare "server" match
+                # would also catch permanent faults such as "The server threw
+                # an exception", costing retries * delay seconds per document.
+                transient_keywords = (
+                    "call was rejected",
+                    "rejected by callee",
+                    "server is busy",
+                    "message filter",
+                    "rpc_e_",
+                )
                 if any(kw in error_str for kw in transient_keywords):
                     if attempt < retries - 1:
                         logger.debug(

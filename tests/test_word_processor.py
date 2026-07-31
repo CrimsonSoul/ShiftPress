@@ -82,6 +82,24 @@ class TestWordProcessor:
         assert result is not None
         assert result.endswith("Thursday.docx")
 
+    def test_permanent_server_error_is_not_retried(self, wp):
+        """A permanent COM fault must fail fast instead of burning retries."""
+        call = MagicMock(side_effect=Exception("The server threw an exception"))
+
+        with pytest.raises(Exception, match="threw an exception"):
+            wp.safe_com_call(call, retries=3, delay=0)
+
+        assert call.call_count == 1
+
+    def test_busy_server_error_is_retried(self, wp):
+        """A genuinely transient COM fault must still be retried."""
+        call = MagicMock(
+            side_effect=[Exception("Server is busy"), Exception("Server is busy"), "ok"]
+        )
+
+        assert wp.safe_com_call(call, retries=3, delay=0) == "ok"
+        assert call.call_count == 3
+
     def test_colliding_normalized_names_raise(self, wp, tmp_path):
         """Two files that normalize to the same name must not silently shadow."""
         (tmp_path / "Thursday Night.docx").write_text("dummy")
@@ -141,12 +159,12 @@ class TestWordProcessor:
         mock_dispatch.assert_called_with("Word.Application")
 
     def test_safe_com_call_retry(self, wp):
-        """Safe COM call should retry on rejection."""
+        """Safe COM call should retry on genuinely transient COM faults."""
         mock_func = MagicMock()
-        # Fail twice with "rejected", then succeed
+        # Fail twice with real transient COM messages, then succeed
         mock_func.side_effect = [
             Exception("Call was rejected by callee"),
-            Exception("Rejected"),
+            Exception("The message filter indicated that the application is busy"),
             "Success",
         ]
 
