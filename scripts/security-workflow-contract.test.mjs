@@ -42,6 +42,7 @@ test('scanner jobs retain stable required names and bounded direct entrypoints',
 
   assert.match(sonar, /^    name: SonarQube quality gate$/mu);
   assert.match(snyk, /^    name: Snyk security gate$/mu);
+  assert.match(snyk, /^    runs-on: windows-latest$/mu);
   assert.match(sonar, /^    timeout-minutes: 25$/mu);
   assert.match(snyk, /^    timeout-minutes: 25$/mu);
   assert.match(sonar, /node scripts\/run-sonar-ci\.mjs "\$\{SONAR_SCOPE\[@\]\}"/u);
