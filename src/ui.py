@@ -18,7 +18,7 @@ try:
 except Exception:  # pragma: no cover
     DateEntry = None
 
-from typing import Optional, Callable, Literal, Union, Any, cast
+from typing import Optional, Callable, Literal, Any, cast
 
 try:
     import win32print  # type: ignore
@@ -54,6 +54,23 @@ _APP_VERSION: Optional[str] = None
 
 # Placeholder text shown in empty path entries.
 _PATH_PLACEHOLDER = "Click Browse to select folder\u2026"
+
+# Reused Tk style and tkcalendar tokens. Keeping these names centralized avoids
+# accidental drift between style definitions and widget construction.
+_STYLE_CARD_FRAME = "Card.TFrame"
+_STYLE_CARD_SUB_LABEL = "CardSub.TLabel"
+_STYLE_TERTIARY_BUTTON = "Tertiary.TButton"
+_STYLE_PRIMARY_BUTTON = "Primary.TButton"
+_STYLE_DANGER_BUTTON = "Danger.TButton"
+_STYLE_HEADER_LABEL = "Header.TLabel"
+_STYLE_SUB_LABEL = "Sub.TLabel"
+_STYLE_COUNT_READY_LABEL = "CountReady.TLabel"
+_STYLE_SUCCESS_LABEL = "Success.TLabel"
+_STYLE_ERROR_LABEL = "Error.TLabel"
+_STYLE_CARD_CHECKBUTTON = "Card.TCheckbutton"
+_STYLE_CARD_RADIOBUTTON = "Card.TRadiobutton"
+_DATE_ENTRY_SELECTED_EVENT = "<<DateEntrySelected>>"
+_DATE_PATTERN = "mm/dd/yyyy"
 
 
 @dataclass
@@ -256,7 +273,7 @@ class ScheduleAppUI:
             foreground=COLORS.text_main,
             font=FONTS.main,
         )
-        self.style.configure("Card.TFrame", background=COLORS.surface)
+        self.style.configure(_STYLE_CARD_FRAME, background=COLORS.surface)
         self.style.configure(
             "Card.TLabel",
             background=COLORS.surface,
@@ -264,7 +281,7 @@ class ScheduleAppUI:
             font=FONTS.main,
         )
         self.style.configure(
-            "CardSub.TLabel",
+            _STYLE_CARD_SUB_LABEL,
             background=COLORS.surface,
             foreground=COLORS.text_dim,
             font=FONTS.sub,
@@ -366,7 +383,7 @@ class ScheduleAppUI:
             foreground=[("disabled", COLORS.text_dim)],
         )
         self.style.configure(
-            "Tertiary.TButton",
+            _STYLE_TERTIARY_BUTTON,
             background=COLORS.background,
             foreground=COLORS.text_dim,
             borderwidth=0,
@@ -374,7 +391,7 @@ class ScheduleAppUI:
             padding=(6, 2),
         )
         self.style.map(
-            "Tertiary.TButton",
+            _STYLE_TERTIARY_BUTTON,
             background=[
                 ("pressed", COLORS.background),
                 ("active", COLORS.background),
@@ -385,7 +402,7 @@ class ScheduleAppUI:
             ],
         )
         self.style.configure(
-            "Primary.TButton",
+            _STYLE_PRIMARY_BUTTON,
             background=COLORS.action,
             foreground=COLORS.text_main,
             bordercolor=COLORS.day_accent,
@@ -394,7 +411,7 @@ class ScheduleAppUI:
             padding=(26, 16),
         )
         self.style.map(
-            "Primary.TButton",
+            _STYLE_PRIMARY_BUTTON,
             background=[
                 ("disabled", COLORS.border),
                 ("pressed", COLORS.action_hover),
@@ -407,7 +424,7 @@ class ScheduleAppUI:
             ],
         )
         self.style.configure(
-            "Danger.TButton",
+            _STYLE_DANGER_BUTTON,
             background=COLORS.error,
             foreground=COLORS.background,
             bordercolor=COLORS.error,
@@ -416,7 +433,7 @@ class ScheduleAppUI:
             padding=(26, 16),
         )
         self.style.map(
-            "Danger.TButton",
+            _STYLE_DANGER_BUTTON,
             background=[
                 ("disabled", COLORS.border),
                 ("pressed", "#E25D72"),
@@ -436,13 +453,13 @@ class ScheduleAppUI:
 
         # Specialized Labels
         self.style.configure(
-            "Header.TLabel",
+            _STYLE_HEADER_LABEL,
             font=FONTS.header,
             foreground=COLORS.text_main,
             background=COLORS.background,
         )
         self.style.configure(
-            "Sub.TLabel",
+            _STYLE_SUB_LABEL,
             font=FONTS.sub,
             foreground=COLORS.text_dim,
             background=COLORS.background,
@@ -456,7 +473,7 @@ class ScheduleAppUI:
         # Semantic readiness states.  Colour reinforces the label text; it is
         # never the only signal, per the DESIGN.md validation-state rule.
         for count_style, count_color in (
-            ("CountReady.TLabel", COLORS.success),
+            (_STYLE_COUNT_READY_LABEL, COLORS.success),
             ("CountMuted.TLabel", COLORS.text_dim),
             ("CountError.TLabel", COLORS.error),
         ):
@@ -469,13 +486,13 @@ class ScheduleAppUI:
 
         # Status labels (success / error variants)
         self.style.configure(
-            "Success.TLabel",
+            _STYLE_SUCCESS_LABEL,
             font=FONTS.sub,
             foreground=COLORS.success,
             background=COLORS.background,
         )
         self.style.configure(
-            "Error.TLabel",
+            _STYLE_ERROR_LABEL,
             font=FONTS.sub,
             foreground=COLORS.error,
             background=COLORS.background,
@@ -505,24 +522,24 @@ class ScheduleAppUI:
             foreground=[("disabled", COLORS.text_dim)],
         )
         self.style.configure(
-            "Card.TCheckbutton",
+            _STYLE_CARD_CHECKBUTTON,
             background=COLORS.surface,
             foreground=COLORS.text_main,
             font=FONTS.bold,
         )
         self.style.map(
-            "Card.TCheckbutton",
+            _STYLE_CARD_CHECKBUTTON,
             background=[("active", COLORS.surface)],
             foreground=[("disabled", COLORS.text_dim)],
         )
         self.style.configure(
-            "Card.TRadiobutton",
+            _STYLE_CARD_RADIOBUTTON,
             background=COLORS.surface,
             foreground=COLORS.text_main,
             font=FONTS.main,
         )
         self.style.map(
-            "Card.TRadiobutton",
+            _STYLE_CARD_RADIOBUTTON,
             background=[("active", COLORS.surface)],
             foreground=[("disabled", COLORS.text_dim)],
         )
@@ -594,8 +611,8 @@ class ScheduleAppUI:
                 p[2] for p in win32print.EnumPrinters(PRINTER_ENUM_CONNECTIONS)
             ]
             return sorted(set(local_printers + network_printers))
-        except Exception as e:
-            logger.error(f"Error enumerating printers: {e}")
+        except Exception:
+            logger.exception("Error enumerating printers")
             return []
 
     def refresh_printers(self) -> None:
@@ -626,8 +643,8 @@ class ScheduleAppUI:
                 self.printer_var.set(current)
             else:
                 self.printer_var.set(DEFAULT_PRINTER_LABEL)
-        except Exception as e:
-            logger.error(f"Could not update printer dropdown: {e}")
+        except Exception:
+            logger.exception("Could not update printer dropdown")
 
     # ------------------------------------------------------------------
     # Widget creation
@@ -655,20 +672,20 @@ class ScheduleAppUI:
         ttk.Label(
             title_row,
             text="Prepare print run",
-            style="Header.TLabel",
+            style=_STYLE_HEADER_LABEL,
         ).pack(side="left")
         version = _get_version()
         if version:
             ttk.Label(
                 title_row,
                 text=f"ShiftPrint  ·  v{version}",
-                style="Sub.TLabel",
+                style=_STYLE_SUB_LABEL,
             ).pack(side="right", anchor="s", pady=(0, 5))
 
         ttk.Label(
             header_row,
             text="Choose exactly which schedules go to print.",
-            style="Sub.TLabel",
+            style=_STYLE_SUB_LABEL,
         ).pack(anchor="w", pady=(6, 0))
 
     def _create_titled_card(
@@ -705,7 +722,7 @@ class ScheduleAppUI:
         shell, card = self._create_titled_card(parent, "Setup", "Setup", 18)
         shell.pack(fill="x", pady=(0, 16))
 
-        summary_row = ttk.Frame(card, style="Card.TFrame")
+        summary_row = ttk.Frame(card, style=_STYLE_CARD_FRAME)
         summary_row.pack(fill="x")
         self.setup_summary_label = ttk.Label(
             summary_row,
@@ -737,11 +754,11 @@ class ScheduleAppUI:
 
         canvas = ttk.Frame(dialog, padding="24")
         canvas.pack(fill="both", expand=True)
-        ttk.Label(canvas, text="Setup", style="Header.TLabel").pack(anchor="w")
+        ttk.Label(canvas, text="Setup", style=_STYLE_HEADER_LABEL).pack(anchor="w")
         ttk.Label(
             canvas,
             text="Choose the template folders and printer used for print runs.",
-            style="Sub.TLabel",
+            style=_STYLE_SUB_LABEL,
         ).pack(anchor="w", pady=(4, 18))
 
         self._setup_details = ttk.Frame(
@@ -884,7 +901,7 @@ class ScheduleAppUI:
             ttk.Label(
                 parent,
                 text="Missing dependency: tkcalendar. Please reinstall requirements.txt.",
-                style="Error.TLabel",
+                style=_STYLE_ERROR_LABEL,
             ).grid(row=0, column=column, sticky="nsew", padx=8)
             logger.error("tkcalendar is not installed; date pickers unavailable")
             return
@@ -908,11 +925,11 @@ class ScheduleAppUI:
             text=f"Include {label} schedule",
             variable=enabled_var,
             command=sync_panel,
-            style="Card.TCheckbutton",
+            style=_STYLE_CARD_CHECKBUTTON,
         )
         include_check.pack(anchor="w", pady=(0, 18))
 
-        mode_row = ttk.Frame(card, style="Card.TFrame")
+        mode_row = ttk.Frame(card, style=_STYLE_CARD_FRAME)
         mode_row.pack(fill="x", pady=(0, 18))
         single_radio = ttk.Radiobutton(
             mode_row,
@@ -920,7 +937,7 @@ class ScheduleAppUI:
             variable=mode_var,
             value="single",
             command=sync_panel,
-            style="Card.TRadiobutton",
+            style=_STYLE_CARD_RADIOBUTTON,
         )
         single_radio.pack(anchor="w", pady=(0, 10))
         range_radio = ttk.Radiobutton(
@@ -929,19 +946,19 @@ class ScheduleAppUI:
             variable=mode_var,
             value="range",
             command=sync_panel,
-            style="Card.TRadiobutton",
+            style=_STYLE_CARD_RADIOBUTTON,
         )
         range_radio.pack(anchor="w")
 
-        date_stack = ttk.Frame(card, style="Card.TFrame")
+        date_stack = ttk.Frame(card, style=_STYLE_CARD_FRAME)
         date_stack.pack(fill="x")
         date_stack.grid_columnconfigure(0, weight=1)
 
         # Label-above-entry mirrors the range rows so both modes occupy the
         # same height and toggling never reflows the window.
-        single_wrap = ttk.Frame(date_stack, style="Card.TFrame")
+        single_wrap = ttk.Frame(date_stack, style=_STYLE_CARD_FRAME)
         single_wrap.grid(row=0, column=0, sticky="ew")
-        ttk.Label(single_wrap, text="Date", style="CardSub.TLabel").pack(
+        ttk.Label(single_wrap, text="Date", style=_STYLE_CARD_SUB_LABEL).pack(
             anchor="w", pady=(0, 6)
         )
         single_picker = self._create_date_entry(
@@ -952,16 +969,16 @@ class ScheduleAppUI:
         single_picker.pack(fill="x")
         single_picker.set_date(default_date)
 
-        range_wrap = ttk.Frame(date_stack, style="Card.TFrame")
+        range_wrap = ttk.Frame(date_stack, style=_STYLE_CARD_FRAME)
         range_wrap.grid(row=0, column=0, sticky="ew")
         range_wrap.grid_columnconfigure(0, weight=1)
         range_wrap.grid_columnconfigure(1, weight=1)
 
-        range_start_wrap = ttk.Frame(range_wrap, style="Card.TFrame")
+        range_start_wrap = ttk.Frame(range_wrap, style=_STYLE_CARD_FRAME)
         range_start_wrap.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        ttk.Label(range_start_wrap, text="Start date", style="CardSub.TLabel").pack(
-            anchor="w", pady=(0, 6)
-        )
+        ttk.Label(
+            range_start_wrap, text="Start date", style=_STYLE_CARD_SUB_LABEL
+        ).pack(anchor="w", pady=(0, 6))
         range_start_picker = self._create_date_entry(
             date_entry_cls,
             range_start_wrap,
@@ -970,9 +987,9 @@ class ScheduleAppUI:
         range_start_picker.pack(fill="x")
         range_start_picker.set_date(default_date)
 
-        range_end_wrap = ttk.Frame(range_wrap, style="Card.TFrame")
+        range_end_wrap = ttk.Frame(range_wrap, style=_STYLE_CARD_FRAME)
         range_end_wrap.grid(row=0, column=1, sticky="ew", padx=(6, 0))
-        ttk.Label(range_end_wrap, text="End date", style="CardSub.TLabel").pack(
+        ttk.Label(range_end_wrap, text="End date", style=_STYLE_CARD_SUB_LABEL).pack(
             anchor="w", pady=(0, 6)
         )
         range_end_picker = self._create_date_entry(
@@ -987,7 +1004,7 @@ class ScheduleAppUI:
         count_label = ttk.Label(
             card,
             text="Selected · 1 document",
-            style="CountReady.TLabel",
+            style=_STYLE_COUNT_READY_LABEL,
         )
         count_label.pack(anchor="w")
 
@@ -1007,15 +1024,15 @@ class ScheduleAppUI:
         self._shift_panels[shift_type] = panel
 
         single_picker.bind(
-            "<<DateEntrySelected>>",
+            _DATE_ENTRY_SELECTED_EVENT,
             lambda _event, selected=shift_type: self._on_shift_date_selected(selected),
         )
         range_start_picker.bind(
-            "<<DateEntrySelected>>",
+            _DATE_ENTRY_SELECTED_EVENT,
             lambda _event, selected=shift_type: self._on_range_start_selected(selected),
         )
         range_end_picker.bind(
-            "<<DateEntrySelected>>",
+            _DATE_ENTRY_SELECTED_EVENT,
             lambda _event, selected=shift_type: self._on_shift_date_selected(selected),
         )
         for picker in (single_picker, range_start_picker, range_end_picker):
@@ -1104,7 +1121,7 @@ class ScheduleAppUI:
         self.manifest_label = ttk.Label(
             card,
             text="Printer: Choose a printer",
-            style="CardSub.TLabel",
+            style=_STYLE_CARD_SUB_LABEL,
             justify="left",
             anchor="w",
         )
@@ -1137,7 +1154,7 @@ class ScheduleAppUI:
             return date_entry_cls(
                 parent,
                 style="DateEntry",
-                date_pattern="mm/dd/yyyy",
+                date_pattern=_DATE_PATTERN,
                 **calendar_kw,
             )
         except TypeError as e:
@@ -1148,7 +1165,7 @@ class ScheduleAppUI:
             return date_entry_cls(
                 parent,
                 style="DateEntry",
-                date_pattern="mm/dd/yyyy",
+                date_pattern=_DATE_PATTERN,
                 calendar_kw=calendar_kw,
             )
         except TypeError as e:
@@ -1156,7 +1173,7 @@ class ScheduleAppUI:
             return date_entry_cls(
                 parent,
                 style="DateEntry",
-                date_pattern="mm/dd/yyyy",
+                date_pattern=_DATE_PATTERN,
             )
 
     def _apply_content_sizing(self) -> None:
@@ -1189,11 +1206,11 @@ class ScheduleAppUI:
         except Exception as e:
             logger.debug(f"Content sizing skipped: {e}")
 
-    def _create_printer_row(self, parent: Union[ttk.Frame, ttk.LabelFrame]) -> None:
+    def _create_printer_row(self, parent: ttk.Frame | ttk.LabelFrame) -> None:
         """Create the printer selection row."""
-        output_row = ttk.Frame(parent, style="Card.TFrame")
+        output_row = ttk.Frame(parent, style=_STYLE_CARD_FRAME)
         output_row.pack(fill="x", pady=(8, 0))
-        ttk.Label(output_row, text="Printer", style="CardSub.TLabel").pack(
+        ttk.Label(output_row, text="Printer", style=_STYLE_CARD_SUB_LABEL).pack(
             anchor="w", pady=(0, 8)
         )
 
@@ -1209,7 +1226,7 @@ class ScheduleAppUI:
             self.printer_var.trace_add("write", self._on_printer_changed)
         except Exception as e:
             logger.debug(f"Could not watch printer selection: {e}")
-        printer_row = ttk.Frame(output_row, style="Card.TFrame")
+        printer_row = ttk.Frame(output_row, style=_STYLE_CARD_FRAME)
         printer_row.pack(fill="x")
 
         self.printer_dropdown = ttk.OptionMenu(
@@ -1248,7 +1265,7 @@ class ScheduleAppUI:
             ttk.Label(
                 output_row,
                 text=msg,
-                style="CardSub.TLabel",
+                style=_STYLE_CARD_SUB_LABEL,
                 foreground=COLORS.error,
             ).pack(anchor="w", pady=(4, 0))
 
@@ -1269,14 +1286,14 @@ class ScheduleAppUI:
         self.status_label = ttk.Label(
             status_wrap,
             text="Review the selected schedules",
-            style="Sub.TLabel",
+            style=_STYLE_SUB_LABEL,
         )
         self.status_label.pack(side="left")
 
         open_logs_btn = ttk.Button(
             status_wrap,
             text="Open logs",
-            style="Tertiary.TButton",
+            style=_STYLE_TERTIARY_BUTTON,
             command=self.open_logs_folder,
             cursor="hand2",
         )
@@ -1298,7 +1315,7 @@ class ScheduleAppUI:
         self._progress_pct = ttk.Label(
             progress_row,
             text="0%",
-            style="Sub.TLabel",
+            style=_STYLE_SUB_LABEL,
             width=5,
             anchor="e",
         )
@@ -1307,14 +1324,14 @@ class ScheduleAppUI:
         self.print_btn = ttk.Button(
             footer,
             text="Print schedules",
-            style="Primary.TButton",
+            style=_STYLE_PRIMARY_BUTTON,
             width=20,
             cursor="hand2",
         )
         self.print_btn.grid(row=0, column=1, rowspan=2, sticky="nsew")
 
     def _create_path_row(
-        self, parent: Union[ttk.Frame, ttk.LabelFrame], label: str, default_val: str
+        self, parent: ttk.Frame | ttk.LabelFrame, label: str, default_val: str
     ) -> ttk.Entry:
         """
         Create a path input row with browse button.
@@ -1327,13 +1344,13 @@ class ScheduleAppUI:
         Returns:
             The entry widget
         """
-        wrap = ttk.Frame(parent, style="Card.TFrame")
+        wrap = ttk.Frame(parent, style=_STYLE_CARD_FRAME)
         wrap.pack(fill="x", pady=8)
-        ttk.Label(wrap, text=label, style="CardSub.TLabel").pack(
+        ttk.Label(wrap, text=label, style=_STYLE_CARD_SUB_LABEL).pack(
             anchor="w", pady=(0, 6)
         )
 
-        row = ttk.Frame(wrap, style="Card.TFrame")
+        row = ttk.Frame(wrap, style=_STYLE_CARD_FRAME)
         row.pack(fill="x")
 
         entry = ttk.Entry(row)
@@ -1475,7 +1492,7 @@ class ScheduleAppUI:
                 f"{end_date.strftime('%m/%d/%Y')}"
             )
         noun = "document" if job_count == 1 else "documents"
-        return f"{selection.shift_type.title()} — {scope} — " f"{job_count} {noun}"
+        return f"{selection.shift_type.title()} — {scope} — {job_count} {noun}"
 
     @staticmethod
     def _document_noun(count: int) -> str:
@@ -1516,7 +1533,7 @@ class ScheduleAppUI:
                 self._set_count(
                     shift_type,
                     f"Selected · {count} {self._document_noun(count)}",
-                    "CountReady.TLabel",
+                    _STYLE_COUNT_READY_LABEL,
                 )
 
     def _describe_manifest(
@@ -1583,9 +1600,9 @@ class ScheduleAppUI:
         if self.print_btn is None:
             return
         if processing:
-            self.print_btn.config(text="Cancel", style="Danger.TButton")
+            self.print_btn.config(text="Cancel", style=_STYLE_DANGER_BUTTON)
         else:
-            self.print_btn.config(style="Primary.TButton")
+            self.print_btn.config(style=_STYLE_PRIMARY_BUTTON)
             self.refresh_manifest_preview()
 
     # ------------------------------------------------------------------
@@ -1622,37 +1639,41 @@ class ScheduleAppUI:
         self._inputs_enabled = enabled
         state: Literal["normal", "disabled"] = "normal" if enabled else "disabled"
         for widget in (self.day_entry, self.night_entry):
-            if widget is not None:
-                try:
-                    widget.config(state=state)
-                except Exception as e:
-                    logger.debug(f"Could not set entry state: {e}")
+            self._set_widget_state(widget, state, "entry")
         for button in self._browse_buttons:
-            try:
-                button.config(state=state)
-            except Exception as e:
-                logger.debug(f"Could not set Browse button state: {e}")
-        if self.printer_dropdown is not None:
-            try:
-                self.printer_dropdown.config(state=state)
-            except Exception as e:
-                logger.debug(f"Could not set printer dropdown state: {e}")
-        if self._refresh_btn is not None:
-            try:
-                self._refresh_btn.config(state=state)
-            except Exception as e:
-                logger.debug(f"Could not set refresh button state: {e}")
-        if self._setup_toggle_btn is not None:
-            try:
-                self._setup_toggle_btn.config(state=state)
-            except Exception as e:
-                logger.debug(f"Could not set setup toggle state: {e}")
+            self._set_widget_state(button, state, "Browse button")
+        self._set_widget_state(self.printer_dropdown, state, "printer dropdown")
+        self._set_widget_state(self._refresh_btn, state, "refresh button")
+        self._set_widget_state(self._setup_toggle_btn, state, "setup toggle")
         for shift_type, panel in self._shift_panels.items():
-            try:
-                panel.include_check.config(state=state)
-                self._sync_shift_panel_state(shift_type)
-            except Exception as e:
-                logger.debug(f"Could not set {shift_type} panel state: {e}")
+            self._set_shift_panel_enabled(shift_type, panel, state)
+
+    @staticmethod
+    def _set_widget_state(
+        widget: Any,
+        state: Literal["normal", "disabled"],
+        description: str,
+    ) -> None:
+        """Set one optional widget state without interrupting the UI lock pass."""
+        if widget is None:
+            return
+        try:
+            widget.config(state=state)
+        except Exception as e:
+            logger.debug(f"Could not set {description} state: {e}")
+
+    def _set_shift_panel_enabled(
+        self,
+        shift_type: ShiftType,
+        panel: _ShiftPanelWidgets,
+        state: Literal["normal", "disabled"],
+    ) -> None:
+        """Set one shift panel's processing lock state."""
+        try:
+            panel.include_check.config(state=state)
+            self._sync_shift_panel_state(shift_type)
+        except Exception as e:
+            logger.debug(f"Could not set {shift_type} panel state: {e}")
 
     def set_print_button_state(self, state: Literal["normal", "disabled"]) -> None:
         """
@@ -1681,22 +1702,22 @@ class ScheduleAppUI:
         """
         if self.status_label:
             if level == "success":
-                style = "Success.TLabel"
+                style = _STYLE_SUCCESS_LABEL
             elif level == "error":
-                style = "Error.TLabel"
+                style = _STYLE_ERROR_LABEL
             elif level is not None:
-                style = "Sub.TLabel"
+                style = _STYLE_SUB_LABEL
             else:
                 # Infer from message for callers that don't pass level.
                 msg_lower = message.lower()
                 if "complete" in msg_lower:
-                    style = "Success.TLabel"
+                    style = _STYLE_SUCCESS_LABEL
                 elif (
                     "cancel" in msg_lower or "error" in msg_lower or "fail" in msg_lower
                 ):
-                    style = "Error.TLabel"
+                    style = _STYLE_ERROR_LABEL
                 else:
-                    style = "Sub.TLabel"
+                    style = _STYLE_SUB_LABEL
             self.status_label.config(text=message, style=style)
         if self.progress_var:
             self.progress_var.set(progress)
@@ -1770,8 +1791,8 @@ class ScheduleAppUI:
                 subprocess.run(["open", str(path)], check=False)
             else:
                 subprocess.run(["xdg-open", str(path)], check=False)
-        except Exception as e:
-            logger.error(f"Could not open logs folder: {e}")
+        except Exception:
+            logger.exception("Could not open logs folder")
             messagebox.showinfo(
                 "Logs Folder",
                 f"Could not open folder automatically.\n\nPath:\n{path}",
