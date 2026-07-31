@@ -36,12 +36,6 @@ __all__ = [
     "MAX_DAYS_RANGE",
     "COM_RETRIES",
     "COM_RETRY_DELAY",
-    "WD_PRIMARY_HEADER_STORY",
-    "WD_EVEN_PAGES_HEADER_STORY",
-    "WD_PRIMARY_FOOTER_STORY",
-    "WD_EVEN_PAGES_FOOTER_STORY",
-    "WD_FIRST_PAGE_HEADER_STORY",
-    "WD_FIRST_PAGE_FOOTER_STORY",
     "WD_FIND_CONTINUE",
     "WD_REPLACE_ALL",
     "PROTECTION_ALLOW_FORM_FIELDS",
@@ -122,15 +116,6 @@ AUTO_RESIZE_MIN_HEIGHT: Final = 400
 # Retry settings for COM calls
 COM_RETRIES: Final = 5
 COM_RETRY_DELAY: Final = 1  # seconds
-
-# Word story types (used to target header/footer-only replacements)
-# https://learn.microsoft.com/en-us/office/vba/api/word.wdstorytype
-WD_EVEN_PAGES_HEADER_STORY: Final = 6  # wdEvenPagesHeaderStory
-WD_PRIMARY_HEADER_STORY: Final = 7  # wdPrimaryHeaderStory
-WD_EVEN_PAGES_FOOTER_STORY: Final = 8  # wdEvenPagesFooterStory
-WD_PRIMARY_FOOTER_STORY: Final = 9  # wdPrimaryFooterStory
-WD_FIRST_PAGE_HEADER_STORY: Final = 10  # wdFirstPageHeaderStory
-WD_FIRST_PAGE_FOOTER_STORY: Final = 11  # wdFirstPageFooterStory
 
 # Word Find/Replace constants
 # See: https://learn.microsoft.com/en-us/office/vba/api/word.wdfindwrap
