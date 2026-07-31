@@ -126,12 +126,8 @@ class ShiftPressApp:
         """Load configuration and apply to UI."""
         try:
             config = self.config_manager.load()
-            if config.day_folder and self.ui.day_entry:
-                self.ui.day_entry.delete(0, tk.END)
-                self.ui.day_entry.insert(0, config.day_folder)
-            if config.night_folder and self.ui.night_entry:
-                self.ui.night_entry.delete(0, tk.END)
-                self.ui.night_entry.insert(0, config.night_folder)
+            self.ui.set_day_folder(config.day_folder)
+            self.ui.set_night_folder(config.night_folder)
             if config.printer_name and self.ui.printer_var:
                 self.ui.printer_var.set(config.printer_name)
             self.ui.refresh_setup_summary()

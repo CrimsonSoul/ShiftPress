@@ -573,8 +573,8 @@ class TestShiftPressApp:
 
         app._load_config()
 
-        app.ui.day_entry.insert.assert_called_with(0, "/saved/day")
-        app.ui.night_entry.insert.assert_called_with(0, "/saved/night")
+        app.ui.set_day_folder.assert_called_with("/saved/day")
+        app.ui.set_night_folder.assert_called_with("/saved/night")
         app.ui.printer_var.set.assert_called_with("Saved Printer")
         app.ui.refresh_setup_summary.assert_called_once()
 

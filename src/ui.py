@@ -1317,15 +1317,39 @@ class ScheduleAppUI:
         initial = current if current and os.path.isdir(current) else None
         path = filedialog.askdirectory(initialdir=initial)
         if path:
-            entry.delete(0, tk.END)
-            entry.config(foreground=COLORS.text_main)
-            entry.insert(0, path)
+            self._set_folder_entry(entry, path)
             logger.debug(f"Selected folder: {path}")
             self.refresh_setup_summary()
 
     # ------------------------------------------------------------------
     # Public getters
     # ------------------------------------------------------------------
+
+    def _set_folder_entry(self, entry: Optional[ttk.Entry], path: str) -> None:
+        """Write one path entry, honoring the placeholder and colour contract.
+
+        Args:
+            entry: The target entry widget, or ``None`` if not yet built.
+            path: The folder path to show.  Empty restores the placeholder.
+        """
+        if entry is None:
+            return
+        value = (path or "").strip()
+        entry.delete(0, tk.END)
+        if value:
+            entry.config(foreground=COLORS.text_main)
+            entry.insert(0, value)
+        else:
+            entry.config(foreground=COLORS.text_dim)
+            entry.insert(0, _PATH_PLACEHOLDER)
+
+    def set_day_folder(self, path: str) -> None:
+        """Set the Day templates folder shown in Setup."""
+        self._set_folder_entry(self.day_entry, path)
+
+    def set_night_folder(self, path: str) -> None:
+        """Set the Night templates folder shown in Setup."""
+        self._set_folder_entry(self.night_entry, path)
 
     def get_day_folder(self) -> str:
         """Get the day folder path."""

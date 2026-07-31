@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.constants import COLORS, FONTS
-from src.ui import ScheduleAppUI
+from src.ui import ScheduleAppUI, _PATH_PLACEHOLDER
 
 
 class _FakeVariable:
@@ -217,6 +217,20 @@ class TestScheduleAppUI:
         assert panel.single_picker.get_date() == date(2026, 8, 2)
         assert panel.range_start_picker.get_date() == date(2026, 8, 5)
         assert panel.range_end_picker.get_date() == date(2026, 8, 7)
+
+    def test_set_day_folder_uses_primary_text_color(self, ui):
+        """A real saved path must not render as placeholder gray."""
+        ui.set_day_folder("C:/Templates/Day")
+
+        ui.day_entry.config.assert_called_with(foreground=COLORS.text_main)
+        ui.day_entry.insert.assert_called_with(0, "C:/Templates/Day")
+
+    def test_set_night_folder_empty_restores_placeholder(self, ui):
+        """An empty saved path must fall back to the dim placeholder."""
+        ui.set_night_folder("")
+
+        ui.night_entry.config.assert_called_with(foreground=COLORS.text_dim)
+        ui.night_entry.insert.assert_called_with(0, _PATH_PLACEHOLDER)
 
     def test_single_date_row_matches_range_row_structure(self, ui):
         """Both date modes must build the same label-above-entry shape."""
