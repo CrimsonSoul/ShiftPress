@@ -48,8 +48,40 @@ jobs:
       - name: Test
         run: pytest --cov=src --cov-report=term-missing
 
+  # The Linux job runs against mocked Windows modules. This one runs the same
+  # suite against the real pywin32 and tkcalendar, which is the only place
+  # API drift in those packages can surface.
+  windows-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Confirm real modules are loaded
+        run: |
+          python -c "import win32print, pythoncom, win32com.client, tkcalendar; print('real Windows modules imported')"
+          python -c "from src.word_processor import get_word_automation_status; ok, msg = get_word_automation_status(); assert ok, msg; print('Word COM bindings available')"
+
+      - name: Report visible printers
+        continue-on-error: true
+        run: python -c "import win32print; print(sorted({p[2] for p in win32print.EnumPrinters(2) + win32print.EnumPrinters(4)}))"
+
+      - name: Test against real pywin32 and tkcalendar
+        run: pytest --cov=src --cov-report=term-missing
+
   build:
-    needs: quality
+    needs: [quality, windows-test]
     if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
 
@@ -84,6 +116,20 @@ jobs:
           --add-data "icon.png;."
           --name "ShiftPress"
           main.py
+
+      # Tier 2 trial: confirm the packaged GUI survives startup on a runner
+      # with no interactive desktop. Dropped if Tk cannot initialise here.
+      - name: Smoke the built exe
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\ShiftPress.exe" -PassThru
+          Start-Sleep -Seconds 20
+          if ($p.HasExited) {
+            Write-Host "::error::ShiftPress.exe exited during startup with code $($p.ExitCode)"
+            exit 1
+          }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "exe stayed alive through startup"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

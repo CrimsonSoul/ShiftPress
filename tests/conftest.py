@@ -1,11 +1,25 @@
+import importlib.util
 import sys
 from unittest.mock import MagicMock
 
-# Mock Windows-specific modules for cross-platform testing.
+# Windows-only and GUI packages are substituted ONLY when the real package is
+# absent. Mocking them unconditionally meant the suite agreed with whatever it
+# was handed, so a Windows CI job now exercises the genuine pywin32 and
+# tkcalendar APIs while Linux and macOS keep the mocks they need.
 # Named mocks provide clearer error messages when unexpected attributes
 # are accessed (vs. bare MagicMock which silently returns new mocks).
-sys.modules["win32print"] = MagicMock(name="win32print")
-sys.modules["pythoncom"] = MagicMock(name="pythoncom")
-sys.modules["win32com"] = MagicMock(name="win32com")
-sys.modules["win32com.client"] = MagicMock(name="win32com.client")
-sys.modules["tkcalendar"] = MagicMock(name="tkcalendar")
+_OPTIONAL_MODULES = (
+    "win32print",
+    "pythoncom",
+    "win32com",
+    "win32com.client",
+    "tkcalendar",
+)
+
+for _name in _OPTIONAL_MODULES:
+    try:
+        _available = importlib.util.find_spec(_name) is not None
+    except (ImportError, ValueError):
+        _available = False
+    if not _available:
+        sys.modules[_name] = MagicMock(name=_name)
