@@ -78,10 +78,25 @@ function validateConfiguration(env) {
   return { serverUrl, testPush };
 }
 
-function npmCommand(env, script, args, timeoutMs, transientOutput) {
+// ShiftPrint is a pip project, so Snyk is invoked directly rather than through
+// npm scripts. requirements-dev.txt is the scan target because it includes the
+// runtime requirements and the build tooling that PyInstaller packages.
+const SEVERITY_THRESHOLD = 'high';
+const PIP_MANIFEST = 'requirements-dev.txt';
+const PIP_ARGS = [`--file=${PIP_MANIFEST}`, '--package-manager=pip'];
+
+export const SNYK_PHASE_ARGS = Object.freeze({
+  'open-source': ['test', ...PIP_ARGS, `--severity-threshold=${SEVERITY_THRESHOLD}`],
+  code: ['code', 'test', `--severity-threshold=${SEVERITY_THRESHOLD}`],
+  monitor: ['monitor', ...PIP_ARGS],
+});
+
+function snykCommand(env, phase, args, timeoutMs, transientOutput) {
+  const phaseArgs = SNYK_PHASE_ARGS[phase];
+  if (!phaseArgs) throw configurationError(`Unknown Snyk phase: ${phase}.`);
   return {
-    file: process.platform === 'win32' ? 'npm.cmd' : 'npm',
-    args: ['run', script, '--', ...args],
+    file: process.platform === 'win32' ? 'snyk.cmd' : 'snyk',
+    args: [...phaseArgs, ...args],
     env,
     timeoutMs,
     maxOutputBytes: MAX_OUTPUT_BYTES,
@@ -104,8 +119,8 @@ function phaseTimeout(deadline, now, label) {
   return Math.min(COMMAND_TIMEOUT_MS, remaining);
 }
 
-async function runPhase({ env, runCommand, script, args, policy, label, timeoutMs }) {
-  const result = await runCommand(npmCommand(env, script, args, timeoutMs, policy.transientOutput));
+async function runPhase({ env, runCommand, phase, args, policy, label, timeoutMs }) {
+  const result = await runCommand(snykCommand(env, phase, args, timeoutMs, policy.transientOutput));
   const outcome = classifyCommandResult(result, policy);
   if (outcome === SCANNER_OUTCOME.CLEAN) return;
   if (outcome === SCANNER_OUTCOME.FINDING) {
@@ -140,7 +155,7 @@ export async function runSnykCi({
     await runPhase({
       env,
       runCommand,
-      script: 'security:snyk:open-source',
+      phase: 'open-source',
       args: projectArgs,
       policy: SCAN_POLICY,
       label: 'Open Source scan',
@@ -149,7 +164,7 @@ export async function runSnykCi({
     await runPhase({
       env,
       runCommand,
-      script: 'security:snyk:code',
+      phase: 'code',
       args: [`--org=${env.SNYK_ORG}`],
       policy: SCAN_POLICY,
       label: 'Code scan',
@@ -159,7 +174,7 @@ export async function runSnykCi({
       await runPhase({
         env,
         runCommand,
-        script: 'security:snyk:monitor',
+        phase: 'monitor',
         args: projectArgs,
         policy: MONITOR_POLICY,
         label: 'test-branch monitor',

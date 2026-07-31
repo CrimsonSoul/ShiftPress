@@ -29,17 +29,23 @@ test('runs Open Source and Code with exact bounded repository arguments on pull 
   assert.equal(result.outcome, SCANNER_OUTCOME.CLEAN);
   assert.equal(commands.length, 2);
   assert.deepEqual(commands[0].args, [
-    'run',
-    'security:snyk:open-source',
-    '--',
+    'test',
+    '--file=requirements-dev.txt',
+    '--package-manager=pip',
+    '--severity-threshold=high',
     '--org=crimsonsoul',
     '--project-name=CrimsonSoul/ShiftPrint',
     '--target-reference=test',
     '--remote-repo-url=https://github.com/CrimsonSoul/ShiftPrint.git',
   ]);
-  assert.deepEqual(commands[1].args, ['run', 'security:snyk:code', '--', '--org=crimsonsoul']);
+  assert.deepEqual(commands[1].args, [
+    'code',
+    'test',
+    '--severity-threshold=high',
+    '--org=crimsonsoul',
+  ]);
   for (const command of commands) {
-    assert.match(command.file, /npm(?:\.cmd)?$/u);
+    assert.match(command.file, /snyk(?:\.cmd)?$/u);
     assert.equal(command.timeoutMs, 600_000);
     assert.equal(command.maxOutputBytes, 32_768);
     assert.ok(command.transientOutput instanceof RegExp);
@@ -63,10 +69,12 @@ test('adds the monitor command only after clean scans on a test-branch push', as
 
   assert.equal(result.outcome, SCANNER_OUTCOME.CLEAN);
   assert.deepEqual(
-    commands.map((args) => args[1]),
-    ['security:snyk:open-source', 'security:snyk:code', 'security:snyk:monitor'],
+    commands.map((args) => args.slice(0, 2).join(' ')),
+    ['test --file=requirements-dev.txt', 'code test', 'monitor --file=requirements-dev.txt'],
   );
-  assert.deepEqual(commands[2].slice(3), commands[0].slice(3));
+  // monitor carries the same repository arguments as the Open Source scan
+  const repoArgs = (args) => args.filter((a) => a.startsWith('--org=') || a.startsWith('--project-name=') || a.startsWith('--target-reference=') || a.startsWith('--remote-repo-url='));
+  assert.deepEqual(repoArgs(commands[2]), repoArgs(commands[0]));
 });
 
 test('blocks documented finding exit 1 and stops before later phases', async () => {
@@ -75,13 +83,13 @@ test('blocks documented finding exit 1 and stops before later phases', async () 
     runSnykCi({
       env: configuredEnv,
       runCommand: async (command) => {
-        commands.push(command.args[1]);
+        commands.push(command.args[0]);
         return commandResult(1, 'high severity vulnerability found');
       },
     }),
     (error) => error instanceof ScannerGateError && error.outcome === SCANNER_OUTCOME.FINDING,
   );
-  assert.deepEqual(commands, ['security:snyk:open-source']);
+  assert.deepEqual(commands, ['test']);
 });
 
 test('warns for documented temporary exits, timeouts, and transient service failures', async () => {
