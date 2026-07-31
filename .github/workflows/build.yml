@@ -7,9 +7,11 @@ on:
         description: "Create a GitHub Release"
         type: boolean
         default: false
+  # test is the working branch, so it is the one that gets gated and built.
+  # main only ever receives commits that already passed here, so triggering on
+  # it as well would run everything twice for a single commit.
   push:
     branches:
-      - main
       - test
   pull_request:
     branches:

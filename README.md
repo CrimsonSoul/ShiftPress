@@ -82,9 +82,14 @@ scope runs.
 
 ## Releases
 
-Every push to `main` or `test` builds a Windows executable and uploads it as
+`test` is the working branch. Every push to it runs the quality gates, then
+builds a Windows executable and uploads it as
 `ShiftPrint-v<version>-<commit>`, so a downloadable build always exists for the
-current commit. Pull requests run the gates only.
+commit you are working on. Push builds expire after 7 days.
+
+`main` does not trigger a build of its own: it only ever receives commits that
+already passed on `test`, so running everything again would duplicate the work
+for a single commit. Pull requests into `main` run the gates only.
 
 The version is read from `__version__` in `src/__init__.py`; it is not entered
 by hand. To cut a published release:
