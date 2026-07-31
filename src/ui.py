@@ -41,6 +41,7 @@ from .logger import get_logger
 from .app_paths import get_data_dir
 from .print_manifest import (
     DateMode,
+    PrintJob,
     ShiftSelection,
     ShiftType,
     build_print_manifest,
@@ -452,18 +453,19 @@ class ScheduleAppUI:
             foreground=COLORS.text_main,
             background=COLORS.surface,
         )
-        self.style.configure(
-            "NightCount.TLabel",
-            font=FONTS.bold,
-            foreground=COLORS.success,
-            background=COLORS.surface,
-        )
-        self.style.configure(
-            "DayCount.TLabel",
-            font=FONTS.bold,
-            foreground=COLORS.success,
-            background=COLORS.surface,
-        )
+        # Semantic readiness states.  Colour reinforces the label text; it is
+        # never the only signal, per the DESIGN.md validation-state rule.
+        for count_style, count_color in (
+            ("CountReady.TLabel", COLORS.success),
+            ("CountMuted.TLabel", COLORS.text_dim),
+            ("CountError.TLabel", COLORS.error),
+        ):
+            self.style.configure(
+                count_style,
+                font=FONTS.bold,
+                foreground=count_color,
+                background=COLORS.surface,
+            )
 
         # Status labels (success / error variants)
         self.style.configure(
@@ -968,7 +970,7 @@ class ScheduleAppUI:
         count_label = ttk.Label(
             card,
             text="Selected · 1 document",
-            style=f"{label}Count.TLabel",
+            style="CountReady.TLabel",
         )
         count_label.pack(anchor="w")
 
@@ -1428,55 +1430,91 @@ class ScheduleAppUI:
         noun = "document" if job_count == 1 else "documents"
         return f"{selection.shift_type.title()} — {scope} — " f"{job_count} {noun}"
 
+    @staticmethod
+    def _document_noun(count: int) -> str:
+        """Return the correctly pluralized document noun for *count*."""
+        return "document" if count == 1 else "documents"
+
+    @staticmethod
+    def _print_button_text(count: int) -> str:
+        """Return the count-bearing label for the primary action."""
+        if count == 0:
+            return "Print schedules"
+        if count == 1:
+            return "Print 1 schedule"
+        return f"Print {count} schedules"
+
+    def _set_count(self, shift_type: ShiftType, text: str, style: str) -> None:
+        """Set one panel's count line text and readiness style together."""
+        self._shift_panels[shift_type].count_label.config(text=text, style=style)
+
+    def _refresh_shift_counts(
+        self,
+        selections: tuple[ShiftSelection, ShiftSelection],
+        errors: dict[ShiftType, Optional[str]],
+    ) -> None:
+        """Update each panel independently so one bad shift cannot accuse the other."""
+        for selection in selections:
+            shift_type = selection.shift_type
+            if not selection.enabled:
+                self._set_count(shift_type, "Not included", "CountMuted.TLabel")
+            elif errors[shift_type]:
+                self._set_count(
+                    shift_type,
+                    f"Check {shift_type.title()} date selection",
+                    "CountError.TLabel",
+                )
+            else:
+                count = len(build_print_manifest((selection,)))
+                self._set_count(
+                    shift_type,
+                    f"Selected · {count} {self._document_noun(count)}",
+                    "CountReady.TLabel",
+                )
+
+    def _describe_manifest(
+        self,
+        selections: tuple[ShiftSelection, ShiftSelection],
+        manifest: tuple[PrintJob, ...],
+    ) -> tuple[str, list[str]]:
+        """Return the manifest title and one numbered line per included shift."""
+        if not manifest:
+            return "This run: No schedules selected", []
+
+        total = len(manifest)
+        title = f"This run: {total} schedule{'' if total == 1 else 's'}"
+        lines: list[str] = []
+        row_number = 1
+        for selection in selections:
+            if not selection.enabled:
+                continue
+            count = sum(1 for job in manifest if job.shift_type == selection.shift_type)
+            lines.append(
+                f"{row_number}. {self._format_selection_summary(selection, count)}"
+            )
+            row_number += 1
+        return title, lines
+
     def refresh_manifest_preview(self) -> None:
         """Refresh the preflight-neutral manifest copy and count-aware action."""
         if len(self._shift_panels) != 2:
             return
 
         selections = self.get_shift_selections()
-        try:
+        errors: dict[ShiftType, Optional[str]] = {
+            selection.shift_type: selection.validate() for selection in selections
+        }
+        self._refresh_shift_counts(selections, errors)
+
+        invalid = [s for s in selections if errors[s.shift_type]]
+        if invalid:
+            manifest: tuple[PrintJob, ...] = ()
+            names = " and ".join(s.shift_type.title() for s in invalid)
+            title = f"This run: Check {names} date selection"
+            lines = [errors[s.shift_type] or "" for s in invalid]
+        else:
             manifest = build_print_manifest(selections)
-            if manifest:
-                title = f"This run: {len(manifest)} schedules"
-                lines: list[str] = []
-                row_number = 1
-                for selection in selections:
-                    if not selection.enabled:
-                        self._shift_panels[selection.shift_type].count_label.config(
-                            text="Not included"
-                        )
-                        continue
-                    count = sum(
-                        1 for job in manifest if job.shift_type == selection.shift_type
-                    )
-                    lines.append(
-                        f"{row_number}. "
-                        f"{self._format_selection_summary(selection, count)}"
-                    )
-                    self._shift_panels[selection.shift_type].count_label.config(
-                        text=(
-                            f"Selected · {count} "
-                            f"{'document' if count == 1 else 'documents'}"
-                        )
-                    )
-                    row_number += 1
-            else:
-                title = "This run: No schedules selected"
-                lines = []
-                for selection in selections:
-                    self._shift_panels[selection.shift_type].count_label.config(
-                        text="Not included"
-                    )
-        except ValueError as e:
-            manifest = ()
-            title = "This run: Check date selection"
-            lines = [str(e)]
-            for selection in selections:
-                self._shift_panels[selection.shift_type].count_label.config(
-                    text=(
-                        "Check date selection" if selection.enabled else "Not included"
-                    )
-                )
+            title, lines = self._describe_manifest(selections, manifest)
 
         printer = self.get_printer_name()
         printer_label = (
@@ -1491,14 +1529,7 @@ class ScheduleAppUI:
         if self.manifest_label is not None:
             self.manifest_label.config(text="\n".join(lines))
         if self.print_btn is not None:
-            count = len(manifest)
-            if count == 0:
-                button_text = "Print schedules"
-            elif count == 1:
-                button_text = "Print 1 schedule"
-            else:
-                button_text = f"Print {count} schedules"
-            self.print_btn.config(text=button_text)
+            self.print_btn.config(text=self._print_button_text(len(manifest)))
 
     def set_processing_mode(self, processing: bool) -> None:
         """Switch the primary action between print and cancellation states."""

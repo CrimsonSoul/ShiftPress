@@ -281,11 +281,71 @@ class TestScheduleAppUI:
         assert "Printer: Test Printer" in manifest_text
         ui.print_btn.config.assert_called_with(text="Print 2 schedules")
         ui._shift_panels["night"].count_label.config.assert_called_with(
-            text="Selected · 1 document"
+            text="Selected · 1 document", style="CountReady.TLabel"
         )
         ui._shift_panels["day"].count_label.config.assert_called_with(
-            text="Selected · 1 document"
+            text="Selected · 1 document", style="CountReady.TLabel"
         )
+
+    def test_single_schedule_manifest_reads_as_singular(self, ui):
+        """A one-document run must not read 'This run: 1 schedules'."""
+        ui._shift_panels["day"].enabled_var.set(False)
+        ui.manifest_title_label = MagicMock()
+        ui.manifest_label = MagicMock()
+        ui.print_btn = MagicMock()
+
+        ui.refresh_manifest_preview()
+
+        assert (
+            ui.manifest_title_label.config.call_args.kwargs["text"]
+            == "This run: 1 schedule"
+        )
+        ui.print_btn.config.assert_called_with(text="Print 1 schedule")
+
+    def test_excluded_shift_uses_muted_state_not_success(self, ui):
+        """An excluded shift must not render in success green."""
+        ui._shift_panels["day"].enabled_var.set(False)
+        # ttk.Label is patched with one mock class, so every label shares an
+        # instance; give each panel its own to assert on them independently.
+        ui._shift_panels["night"].count_label = MagicMock()
+        ui._shift_panels["day"].count_label = MagicMock()
+        ui.manifest_title_label = MagicMock()
+        ui.manifest_label = MagicMock()
+        ui.print_btn = MagicMock()
+
+        ui.refresh_manifest_preview()
+
+        ui._shift_panels["day"].count_label.config.assert_called_once_with(
+            text="Not included", style="CountMuted.TLabel"
+        )
+
+    def test_invalid_night_range_does_not_flag_valid_day(self, ui):
+        """One shift's bad dates must not accuse the other shift."""
+        night = ui._shift_panels["night"]
+        night.mode_var.set("range")
+        night.range_start_picker.set_date(date(2026, 8, 10))
+        night.range_end_picker.set_date(date(2026, 8, 1))
+        # ttk.Label is patched with one mock class, so every label shares an
+        # instance; give each panel its own to assert on them independently.
+        night.count_label = MagicMock()
+        ui._shift_panels["day"].count_label = MagicMock()
+        ui.manifest_title_label = MagicMock()
+        ui.manifest_label = MagicMock()
+        ui.print_btn = MagicMock()
+
+        ui.refresh_manifest_preview()
+
+        night.count_label.config.assert_called_once_with(
+            text="Check Night date selection", style="CountError.TLabel"
+        )
+        ui._shift_panels["day"].count_label.config.assert_called_once_with(
+            text="Selected · 1 document", style="CountReady.TLabel"
+        )
+        title = ui.manifest_title_label.config.call_args.kwargs["text"]
+        assert title == "This run: Check Night date selection"
+        body = ui.manifest_label.config.call_args.kwargs["text"]
+        assert "Night schedule: End date cannot be before start date" in body
+        ui.print_btn.config.assert_called_with(text="Print schedules")
 
     def test_manifest_preview_blocks_empty_selection(self, ui):
         """No included shifts should produce no jobs and no numeric promise."""
