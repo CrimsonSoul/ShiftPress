@@ -126,7 +126,7 @@ _WINDOWS_RESERVED_NAMES = frozenset(
 )
 
 # Single-pass translation table for dangerous characters.
-_DANGEROUS_CHAR_TABLE = str.maketrans({c: "_" for c in '/\\:*?"<>|'})
+_DANGEROUS_CHAR_TABLE = str.maketrans(dict.fromkeys('/\\:*?"<>|', "_"))
 
 
 def sanitize_filename(filename: str) -> str:

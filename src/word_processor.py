@@ -96,17 +96,7 @@ class WordProcessor:
         try:
             pythoncom.CoInitialize()
             self._com_initialized = True
-
-            # Prefer DispatchEx to avoid attaching to an existing interactive Word instance.
-            dispatch_ex = getattr(win32_client, "DispatchEx", None)
-            use_dispatch_ex = callable(dispatch_ex) and getattr(
-                dispatch_ex, "__module__", ""
-            ).startswith("win32com")
-            if use_dispatch_ex:
-                dispatch_ex_fn = cast(Callable[[str], Any], dispatch_ex)
-                self.word_app = dispatch_ex_fn("Word.Application")
-            else:
-                self.word_app = win32_client.Dispatch("Word.Application")
+            self.word_app = self._create_word_application()
 
             if self.word_app:
                 self.word_app.Visible = False
@@ -121,7 +111,7 @@ class WordProcessor:
             self._initialized = True
             logger.info("Word application initialized")
         except Exception as e:
-            logger.error(f"Failed to initialize Word application: {e}")
+            logger.exception("Failed to initialize Word application")
             # If COM was initialized in this thread, uninitialize to avoid leaking.
             if self._com_initialized:
                 try:
@@ -133,6 +123,18 @@ class WordProcessor:
                 finally:
                     self._com_initialized = False
             raise RuntimeError(f"Could not initialize Word: {e}") from e
+
+    @staticmethod
+    def _create_word_application() -> Any:
+        """Create an isolated Word instance when real pywin32 exposes DispatchEx."""
+        dispatch_ex = getattr(win32_client, "DispatchEx", None)
+        use_dispatch_ex = callable(dispatch_ex) and getattr(
+            dispatch_ex, "__module__", ""
+        ).startswith("win32com")
+        if use_dispatch_ex:
+            dispatch_ex_fn = cast(Callable[[str], Any], dispatch_ex)
+            return dispatch_ex_fn("Word.Application")
+        return win32_client.Dispatch("Word.Application")
 
     def shutdown(self) -> None:
         """Shutdown the Word application instance."""
@@ -193,7 +195,7 @@ class WordProcessor:
         for entry in Path(folder_path).iterdir():
             name = entry.name
             # Skip Word temp lock files and hidden files
-            if name.startswith("~$") or name.startswith("."):
+            if name.startswith(("~$", ".")):
                 continue
             if name.lower().endswith(DOCX_EXTENSION):
                 base_name = " ".join(entry.stem.lower().split())
@@ -274,7 +276,7 @@ class WordProcessor:
                         )
                         time.sleep(delay)
                         continue
-                logger.error(f"COM call failed after {attempt + 1} attempts: {e}")
+                logger.exception("COM call failed after %s attempts", attempt + 1)
                 raise
 
         # Defensive: this path is only reachable if retries == 0, which is disallowed above.
@@ -334,48 +336,11 @@ class WordProcessor:
 
         for attempt in range(2):
             cache = self._template_cache[folder_path]
-
-            # 1. Try exact match
-            if template_name_lower in cache:
-                target = self._resolve_unique(
-                    template_name_lower, cache[template_name_lower]
-                )
-                logger.debug(f"Template exact match: '{template_name}' -> {target}")
+            target = self._match_cached_template(
+                cache, template_name_lower, template_name
+            )
+            if target:
                 return target
-
-            # 2. Try robust matching using word boundaries
-            # This prevents "Thursday" matching "THIRD Thursday"
-            # but allows "Thursday" matching "Thursday Night" if it's the only match
-            pattern = re.compile(rf"\b{re.escape(template_name_lower)}\b")
-
-            matched_keys: list[str] = []
-            for base_name in cache:
-                if pattern.search(base_name):
-                    # Special logic: if search term doesn't have "third" but filename does, skip
-                    # This prevents "Thursday" matching "THIRD Thursday"
-                    if "third" not in template_name_lower and "third" in base_name:
-                        continue
-                    matched_keys.append(base_name)
-
-            if len(matched_keys) == 1:
-                key = matched_keys[0]
-                target = self._resolve_unique(key, cache[key])
-                logger.info(f"Found robust template match: {target}")
-                return target
-            if len(matched_keys) > 1:
-                # An exact stem equals the cache key, so branch 1 already
-                # handled it.  Prefer the one remaining prefix match.
-                starts = [k for k in matched_keys if k.startswith(template_name_lower)]
-                if len(starts) == 1:
-                    target = self._resolve_unique(starts[0], cache[starts[0]])
-                    logger.info(f"Found specific template match: {target}")
-                    return target
-
-                candidates = sorted(path for key in matched_keys for path in cache[key])
-                raise TemplateLookupError(
-                    f"Ambiguous template matches for '{template_name}'. "
-                    f"Please rename templates to be unique. Matches: {candidates}"
-                )
 
             # Not found: refresh once in case templates were added during runtime.
             # Only refresh if we had a pre-existing cache; if we just built the cache,
@@ -392,6 +357,45 @@ class WordProcessor:
 
         # Defensive: loop always returns, but keep mypy satisfied.
         return None
+
+    def _match_cached_template(
+        self,
+        cache: dict[str, list[str]],
+        normalized_name: str,
+        display_name: str,
+    ) -> Optional[str]:
+        """Resolve one template name against an already-built folder cache."""
+        if normalized_name in cache:
+            target = self._resolve_unique(normalized_name, cache[normalized_name])
+            logger.debug(f"Template exact match: '{display_name}' -> {target}")
+            return target
+
+        pattern = re.compile(rf"\b{re.escape(normalized_name)}\b")
+        matched_keys = [
+            base_name
+            for base_name in cache
+            if pattern.search(base_name)
+            and not ("third" not in normalized_name and "third" in base_name)
+        ]
+        if len(matched_keys) == 1:
+            key = matched_keys[0]
+            target = self._resolve_unique(key, cache[key])
+            logger.info(f"Found robust template match: {target}")
+            return target
+        if len(matched_keys) <= 1:
+            return None
+
+        starts = [key for key in matched_keys if key.startswith(normalized_name)]
+        if len(starts) == 1:
+            target = self._resolve_unique(starts[0], cache[starts[0]])
+            logger.info(f"Found specific template match: {target}")
+            return target
+
+        candidates = sorted(path for key in matched_keys for path in cache[key])
+        raise TemplateLookupError(
+            f"Ambiguous template matches for '{display_name}'. "
+            f"Please rename templates to be unique. Matches: {candidates}"
+        )
 
     def print_document(
         self,
@@ -419,8 +423,8 @@ class WordProcessor:
         try:
             target_file = self.find_template_file(folder, template_name)
         except TemplateLookupError as e:
-            logger.error(
-                f"Template lookup error for '{template_name}' in '{folder}': {e}"
+            logger.exception(
+                "Template lookup error for '%s' in '%s'", template_name, folder
             )
             return False, str(e)
         if not target_file:
@@ -429,7 +433,7 @@ class WordProcessor:
         # Verify template is within the expected folder (prevents path traversal)
         if not is_path_within_base(target_file, folder):
             logger.error(f"Template path '{target_file}' is outside folder '{folder}'")
-            return False, f"Template path is outside the expected folder"
+            return False, "Template path is outside the expected folder"
         logger.info(f"Template '{template_name}' resolved to: {target_file}")
 
         doc = None
@@ -440,34 +444,19 @@ class WordProcessor:
                 self.word_app.Documents.Open, target_file, False, True
             )
 
-            # Unprotect if necessary
-            if doc.ProtectionType != PROTECTION_NONE:
-                try:
-                    self.safe_com_call(doc.Unprotect)
-                    logger.debug("Document unprotected")
-                except Exception as e:
-                    logger.warning(f"Could not unprotect document: {e}")
-                    # If still protected, date replacement will silently fail.
-                    # Abort rather than printing with wrong dates.
-                    if doc.ProtectionType != PROTECTION_NONE:
-                        self.safe_com_call(doc.Close, CLOSE_NO_SAVE)
-                        doc = None
-                        return (
-                            False,
-                            f"Document is protected and could not be unprotected: {template_name}",
-                        )
+            if not self._ensure_document_unprotected(doc):
+                self.safe_com_call(doc.Close, CLOSE_NO_SAVE)
+                doc = None
+                return (
+                    False,
+                    f"Document is protected and could not be unprotected: {template_name}",
+                )
 
             # Replace dates
             self.replace_dates(doc, current_date)
 
             # Set printer and print
-            if self.word_app:
-                try:
-                    self.word_app.ActivePrinter = printer_name
-                except Exception as e:
-                    logger.warning(
-                        f"Could not set ActivePrinter to '{printer_name}': {e}"
-                    )
+            self._set_active_printer(printer_name)
             logger.debug(f"Printing to: {printer_name}")
             # PrintOut(Background, Append, Range, OutputFileName, From, To, Item, Copies, ...)
             # Background=False ensures synchronous printing
@@ -481,7 +470,7 @@ class WordProcessor:
             return True, None
 
         except Exception as e:
-            logger.error(f"Error printing document {target_file}: {e}")
+            logger.exception("Error printing document %s", target_file)
             return False, str(e)
 
         finally:
@@ -489,8 +478,29 @@ class WordProcessor:
             if doc:
                 try:
                     self.safe_com_call(doc.Close, CLOSE_NO_SAVE)
-                except Exception as e:
-                    logger.warning(f"Error closing document: {e}")
+                except Exception:
+                    logger.exception("Error closing document")
+
+    def _ensure_document_unprotected(self, doc: Any) -> bool:
+        """Unprotect a document and report whether date replacement is safe."""
+        if doc.ProtectionType == PROTECTION_NONE:
+            return True
+        try:
+            self.safe_com_call(doc.Unprotect)
+            logger.debug("Document unprotected")
+            return True
+        except Exception:
+            logger.exception("Could not unprotect document")
+        return bool(doc.ProtectionType == PROTECTION_NONE)
+
+    def _set_active_printer(self, printer_name: str) -> None:
+        """Best-effort selection of the configured Word printer."""
+        if not self.word_app:
+            return
+        try:
+            self.word_app.ActivePrinter = printer_name
+        except Exception:
+            logger.exception("Could not set ActivePrinter to '%s'", printer_name)
 
     def replace_dates(self, doc: Any, current_date: date) -> None:
         """
