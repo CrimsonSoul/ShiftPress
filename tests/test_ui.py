@@ -68,7 +68,9 @@ class TestScheduleAppUI:
         # Mock win32print and widget creation to avoid Tcl errors
         with patch("win32print.EnumPrinters", return_value=[]), patch(
             "src.ui.ttk.Style"
-        ), patch("src.ui.ttk.Frame") as MockFrame, patch("src.ui.ttk.Label"), patch(
+        ), patch("src.ui.ttk.Frame") as MockFrame, patch(
+            "src.ui.ttk.Label"
+        ) as MockLabel, patch(
             "src.ui.ttk.LabelFrame"
         ) as MockLabelFrame, patch(
             "src.ui.ttk.Entry"
@@ -111,6 +113,7 @@ class TestScheduleAppUI:
             ui._test_ttk_button_class = MockTtkButton
             ui._test_tk_button_class = MockTkButton
             ui._test_frame_class = MockFrame
+            ui._test_label_class = MockLabel
             ui._test_label_frame_class = MockLabelFrame
             ui._test_toplevel_class = MockToplevel
             yield ui
@@ -214,6 +217,37 @@ class TestScheduleAppUI:
         assert panel.single_picker.get_date() == date(2026, 8, 2)
         assert panel.range_start_picker.get_date() == date(2026, 8, 5)
         assert panel.range_end_picker.get_date() == date(2026, 8, 7)
+
+    def test_single_date_row_matches_range_row_structure(self, ui):
+        """Both date modes must build the same label-above-entry shape."""
+        panel = ui._shift_panels["night"]
+
+        panel.single_picker.pack.assert_any_call(fill="x")
+        panel.range_start_picker.pack.assert_any_call(fill="x")
+        panel.range_end_picker.pack.assert_any_call(fill="x")
+        assert panel.single_picker.grid.call_count == 0
+
+        date_labels = [
+            call
+            for call in ui._test_label_class.call_args_list
+            if call.kwargs.get("text") == "Date"
+        ]
+        assert len(date_labels) == 2  # one per shift panel
+        assert date_labels[0].kwargs["style"] == "CardSub.TLabel"
+
+    def test_window_sizing_derives_from_rendered_content(self, ui, root):
+        """minsize and geometry must come from content, not a hardcoded guess."""
+        root.winfo_reqheight.return_value = 812
+        root.winfo_reqwidth.return_value = 1000
+        root.winfo_screenwidth.return_value = 1920
+        root.winfo_screenheight.return_value = 1080
+        root.minsize.reset_mock()
+        root.geometry.reset_mock()
+
+        ui._apply_content_sizing()
+
+        root.minsize.assert_called_once_with(1040, 812)
+        root.geometry.assert_called_once_with("1040x812")
 
     def test_manifest_preview_uses_actual_selected_job_count(self, ui):
         """The visible manifest and action should reflect independent jobs."""

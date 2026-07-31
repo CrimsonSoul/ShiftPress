@@ -29,8 +29,6 @@ from .constants import (
     COLORS,
     FONTS,
     WINDOW_WIDTH,
-    WINDOW_HEIGHT,
-    WINDOW_MIN_HEIGHT,
     WINDOW_RESIZABLE,
     PROGRESS_MAX,
     PRINTER_ENUM_LOCAL,
@@ -198,7 +196,6 @@ class ScheduleAppUI:
         """
         self.root = root
         self.root.title("ShiftPress")
-        self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
         self.root.resizable(WINDOW_RESIZABLE, WINDOW_RESIZABLE)
         self.root.configure(bg=COLORS.background)
         self._today = today or date.today()
@@ -206,12 +203,6 @@ class ScheduleAppUI:
 
         # Apply window icon if available.
         self._apply_icon()
-
-        # Provide a sane minimum size; DPI scaling can otherwise clip content.
-        try:
-            self.root.minsize(WINDOW_WIDTH, WINDOW_MIN_HEIGHT)
-        except Exception as e:
-            logger.debug(f"Could not set minimum window size: {e}")
 
         # Configure styles
         self.style = ttk.Style()
@@ -246,8 +237,8 @@ class ScheduleAppUI:
         # Create widgets
         self._create_widgets()
 
-        # If DPI scaling / fonts push content beyond default height, expand once.
-        self._auto_resize_to_content()
+        # Derive geometry and minimum size from the rendered content.
+        self._apply_content_sizing()
 
         # Center the window on screen after final sizing.
         self._center_window()
@@ -927,18 +918,19 @@ class ScheduleAppUI:
         date_stack.pack(fill="x")
         date_stack.grid_columnconfigure(0, weight=1)
 
+        # Label-above-entry mirrors the range rows so both modes occupy the
+        # same height and toggling never reflows the window.
         single_wrap = ttk.Frame(date_stack, style="Card.TFrame")
         single_wrap.grid(row=0, column=0, sticky="ew")
-        single_wrap.grid_columnconfigure(1, weight=1)
-        ttk.Label(single_wrap, text="Date:", style="Card.TLabel").grid(
-            row=0, column=0, sticky="w", padx=(0, 14)
+        ttk.Label(single_wrap, text="Date", style="CardSub.TLabel").pack(
+            anchor="w", pady=(0, 6)
         )
         single_picker = self._create_date_entry(
             date_entry_cls,
             single_wrap,
             calendar_kw=self._calendar_kwargs(),
         )
-        single_picker.grid(row=0, column=1, sticky="ew")
+        single_picker.pack(fill="x")
         single_picker.set_date(default_date)
 
         range_wrap = ttk.Frame(date_stack, style="Card.TFrame")
@@ -1118,25 +1110,35 @@ class ScheduleAppUI:
                 date_pattern="mm/dd/yyyy",
             )
 
-    def _auto_resize_to_content(self) -> None:
-        """Expand the window once if content would be clipped."""
+    def _apply_content_sizing(self) -> None:
+        """Size the window from rendered content so it cannot clip itself.
+
+        Deriving both the initial geometry and the minimum size from Tk's
+        computed requirement keeps the primary action visible under any
+        Windows text-scaling setting, which a hardcoded height cannot.
+        Both date modes are the same height by construction, so the
+        requirement does not change after launch.
+        """
 
         try:
             self.root.update_idletasks()
             req_w = self.root.winfo_reqwidth()
             req_h = self.root.winfo_reqheight()
-            cur_w = self.root.winfo_width()
-            cur_h = self.root.winfo_height()
             scr_w = self.root.winfo_screenwidth()
             scr_h = self.root.winfo_screenheight()
 
-            target_w = min(max(cur_w, req_w), max(AUTO_RESIZE_MIN_WIDTH, scr_w - 80))
-            target_h = min(max(cur_h, req_h), max(AUTO_RESIZE_MIN_HEIGHT, scr_h - 80))
-            if target_w != cur_w or target_h != cur_h:
-                self.root.geometry(f"{target_w}x{target_h}")
+            target_w = min(
+                max(WINDOW_WIDTH, req_w), max(AUTO_RESIZE_MIN_WIDTH, scr_w - 80)
+            )
+            target_h = min(
+                max(AUTO_RESIZE_MIN_HEIGHT, req_h),
+                max(AUTO_RESIZE_MIN_HEIGHT, scr_h - 80),
+            )
+
+            self.root.minsize(target_w, target_h)
+            self.root.geometry(f"{target_w}x{target_h}")
         except Exception as e:
-            logger.debug(f"Auto-resize skipped: {e}")
-            return
+            logger.debug(f"Content sizing skipped: {e}")
 
     def _create_printer_row(self, parent: Union[ttk.Frame, ttk.LabelFrame]) -> None:
         """Create the printer selection row."""

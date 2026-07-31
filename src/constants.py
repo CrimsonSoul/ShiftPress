@@ -30,7 +30,6 @@ __all__ = [
     "CONFIG_FILENAME",
     "LOG_FILENAME",
     "WINDOW_WIDTH",
-    "WINDOW_HEIGHT",
     "WINDOW_RESIZABLE",
     "PROGRESS_MAX",
     "MAX_DAYS_RANGE",
@@ -43,7 +42,6 @@ __all__ = [
     "MAX_PREFLIGHT_MISSING_SHOWN",
     "MAX_FAILURE_SUMMARY_SHOWN",
     "MAX_FILENAME_LENGTH",
-    "WINDOW_MIN_HEIGHT",
     "AUTO_RESIZE_MIN_WIDTH",
     "AUTO_RESIZE_MIN_HEIGHT",
     "COLORS",
@@ -91,7 +89,6 @@ LOG_FILENAME: Final = "shiftpress.log"
 
 # UI Constants
 WINDOW_WIDTH: Final = 1040
-WINDOW_HEIGHT: Final = 720
 WINDOW_RESIZABLE: Final = True
 
 # Progress bar
@@ -108,8 +105,7 @@ MAX_FAILURE_SUMMARY_SHOWN: Final = 5  # failures shown in the summary dialog
 # Path safety
 MAX_FILENAME_LENGTH: Final = 255
 
-# UI sizing limits
-WINDOW_MIN_HEIGHT: Final = 720
+# UI sizing limits (height is derived from rendered content at launch)
 AUTO_RESIZE_MIN_WIDTH: Final = 320
 AUTO_RESIZE_MIN_HEIGHT: Final = 400
 
