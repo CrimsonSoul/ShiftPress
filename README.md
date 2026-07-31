@@ -20,6 +20,7 @@ ShiftPress is a Windows desktop app that batch-prints shift schedule templates v
   count, and printer before a run starts
 - Date replacement across body, header, and footer story ranges
 - Template path, printer, and date-range preflight validation before any processing begins
+- Ambiguous template names are rejected at preflight rather than resolved silently
 - Per-document retry handling for transient COM errors with structured failure logging
 - Cancelable background processing with responsive UI progress updates
 - Timestamped CSV failure reports for audit and retry workflows
@@ -29,6 +30,7 @@ ShiftPress is a Windows desktop app that batch-prints shift schedule templates v
 - `src/main.py` — orchestration and workflow control
 - `src/ui.py` — Tkinter/ttk interface layer
 - `src/word_processor.py` — Word COM automation lifecycle (open, replace, print, close)
+- `src/print_manifest.py` — shift selection, validation, and print manifest construction
 - `src/scheduler.py` — date resolution and template path logic
 - `src/config.py` — config management
 - `src/path_validation.py` — path traversal and filename safety checks
@@ -69,17 +71,34 @@ mypy src                         # type checking
 pylint src --fail-under=8.0      # linting gate
 ```
 
-The test suite mocks all Windows-only modules so it can run on any platform in CI.
+All four gates run in CI on pushes to `main` and `test`, and on pull requests to
+`main`. The test suite mocks all Windows-only modules so it can run on any
+platform.
+
 Before a release, use the
 [Windows print smoke test](docs/windows-smoke-test.md) to verify real Word COM
 and physical printer behavior for Night-only, Day-only, both-shift, and mixed
 scope runs.
+
+## Releases
+
+The release version is read from `__version__` in `src/__init__.py`; it is not
+entered by hand. To cut a release:
+
+1. Bump `__version__` and commit.
+2. Run the **Build** workflow via `workflow_dispatch`, with `create_release`
+   enabled if you want a published GitHub Release.
+
+The build job runs only after the quality gates pass, and the tag, artifact
+name, and in-app version all come from that one value.
 
 ## Security
 
 - Word documents open in read-only mode during processing; originals are never modified
 - Word macros are force-disabled on every document open
 - Path validation blocks traversal outside configured template root directories
+- Template names that collide after normalization are rejected, so a run can never
+  print an arbitrary file chosen by directory order
 - Date range limits prevent runaway batch operations
 - Config writes are atomic; all operations are logged with structured timestamps
 
@@ -88,7 +107,8 @@ scope runs.
 - `main.py` — top-level entry point
 - `src/` — application modules (controller, UI, scheduler, COM processor, config, validation)
 - `tests/` — unit tests and module fixtures
-- `.github/workflows/build.yml` — Windows build and release workflow via PyInstaller
+- `.github/workflows/build.yml` — quality gates on every push, plus the
+  on-demand Windows build and release workflow via PyInstaller
 
 ## License
 
