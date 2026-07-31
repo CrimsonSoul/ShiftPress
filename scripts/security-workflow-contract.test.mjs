@@ -45,6 +45,7 @@ test('scanner jobs retain stable required names and bounded direct entrypoints',
   assert.match(sonar, /^    timeout-minutes: 25$/mu);
   assert.match(snyk, /^    timeout-minutes: 25$/mu);
   assert.match(sonar, /node scripts\/run-sonar-ci\.mjs "\$\{SONAR_SCOPE\[@\]\}"/u);
+  assert.match(snyk, /run: pip install -r requirements-dev\.txt/u);
   assert.match(snyk, /run: node scripts\/run-snyk-ci\.mjs/u);
   assert.doesNotMatch(securityWorkflow, /npm (?:ci|run)/u);
 });
