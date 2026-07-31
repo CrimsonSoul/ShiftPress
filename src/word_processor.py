@@ -76,7 +76,7 @@ class WordProcessor:
         self.word_app: Any = None
         self._initialized = False
         self._com_initialized = False
-        self._template_cache: dict[str, dict[str, str]] = {}
+        self._template_cache: dict[str, dict[str, list[str]]] = {}
 
     def initialize(self) -> None:
         """
@@ -173,7 +173,7 @@ class WordProcessor:
             self._template_cache.clear()
             logger.debug("Cleared all template caches")
 
-    def _build_template_cache(self, folder_path: str) -> dict[str, str]:
+    def _build_template_cache(self, folder_path: str) -> dict[str, list[str]]:
         """Build a normalized template cache for a folder.
 
         Scans *folder_path* for ``.docx`` files, filtering out Word lock
@@ -184,10 +184,13 @@ class WordProcessor:
 
         Returns:
             Dict mapping normalized (lower-cased, whitespace-collapsed) base
-            names to their full file paths.
+            names to every file path that normalizes to that name.  A name
+            with more than one path is a collision and is rejected at lookup
+            time rather than silently resolved to whichever file the
+            filesystem happened to list last.
         """
 
-        cache: dict[str, str] = {}
+        cache: dict[str, list[str]] = {}
         for entry in Path(folder_path).iterdir():
             name = entry.name
             # Skip Word temp lock files and hidden files
@@ -195,7 +198,9 @@ class WordProcessor:
                 continue
             if name.lower().endswith(DOCX_EXTENSION):
                 base_name = " ".join(entry.stem.lower().split())
-                cache[base_name] = str(entry)
+                cache.setdefault(base_name, []).append(str(entry))
+        for paths in cache.values():
+            paths.sort()
         return cache
 
     def _ensure_template_cache(
@@ -267,6 +272,29 @@ class WordProcessor:
         # Defensive: this path is only reachable if retries == 0, which is disallowed above.
         raise RuntimeError("COM call failed")
 
+    @staticmethod
+    def _resolve_unique(base_name: str, paths: list[str]) -> str:
+        """Return the single path for *base_name*, or reject the collision.
+
+        Args:
+            base_name: The normalized template name that was matched.
+            paths: Every file path that normalizes to *base_name*.
+
+        Returns:
+            The one matching file path.
+
+        Raises:
+            TemplateLookupError: If more than one file normalizes to the
+                same name, which would otherwise print an arbitrary file.
+        """
+        if len(paths) > 1:
+            names = ", ".join(sorted(Path(p).name for p in paths))
+            raise TemplateLookupError(
+                f"Multiple template files resolve to the same name "
+                f"'{base_name}': {names}. Rename templates to be unique."
+            )
+        return paths[0]
+
     def find_template_file(self, folder: str, template_name: str) -> Optional[str]:
         """
         Find a template file in the given folder.
@@ -301,7 +329,9 @@ class WordProcessor:
 
             # 1. Try exact match
             if template_name_lower in cache:
-                target = cache[template_name_lower]
+                target = self._resolve_unique(
+                    template_name_lower, cache[template_name_lower]
+                )
                 logger.debug(f"Template exact match: '{template_name}' -> {target}")
                 return target
 
@@ -310,45 +340,33 @@ class WordProcessor:
             # but allows "Thursday" matching "Thursday Night" if it's the only match
             pattern = re.compile(rf"\b{re.escape(template_name_lower)}\b")
 
-            matches: list[str] = []
-            for base_name, full_path in cache.items():
+            matched_keys: list[str] = []
+            for base_name in cache:
                 if pattern.search(base_name):
                     # Special logic: if search term doesn't have "third" but filename does, skip
                     # This prevents "Thursday" matching "THIRD Thursday"
                     if "third" not in template_name_lower and "third" in base_name:
                         continue
-                    matches.append(full_path)
+                    matched_keys.append(base_name)
 
-            if len(matches) == 1:
-                logger.info(f"Found robust template match: {matches[0]}")
-                return matches[0]
-            elif len(matches) > 1:
-                # If multiple matches, try to find the one that starts with it (more specific)
-                exact = [
-                    m
-                    for m in matches
-                    if " ".join(Path(m).stem.lower().split()) == template_name_lower
-                ]
-                if len(exact) == 1:
-                    logger.info(
-                        f"Found exact-stem template match from multiple: {exact[0]}"
-                    )
-                    return exact[0]
-
-                starts = [
-                    m
-                    for m in matches
-                    if Path(m).stem.lower().startswith(template_name_lower)
-                ]
+            if len(matched_keys) == 1:
+                key = matched_keys[0]
+                target = self._resolve_unique(key, cache[key])
+                logger.info(f"Found robust template match: {target}")
+                return target
+            if len(matched_keys) > 1:
+                # An exact stem equals the cache key, so branch 1 already
+                # handled it.  Prefer the one remaining prefix match.
+                starts = [k for k in matched_keys if k.startswith(template_name_lower)]
                 if len(starts) == 1:
-                    logger.info(
-                        f"Found specific template match from multiple: {starts[0]}"
-                    )
-                    return starts[0]
+                    target = self._resolve_unique(starts[0], cache[starts[0]])
+                    logger.info(f"Found specific template match: {target}")
+                    return target
 
+                candidates = sorted(path for key in matched_keys for path in cache[key])
                 raise TemplateLookupError(
                     f"Ambiguous template matches for '{template_name}'. "
-                    f"Please rename templates to be unique. Matches: {matches}"
+                    f"Please rename templates to be unique. Matches: {candidates}"
                 )
 
             # Not found: refresh once in case templates were added during runtime.

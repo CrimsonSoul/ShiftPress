@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 from pathlib import Path
 from datetime import date
 
-from src.word_processor import WordProcessor
+from src.word_processor import WordProcessor, TemplateLookupError
 
 
 class TestWordProcessor:
@@ -81,6 +81,32 @@ class TestWordProcessor:
         result = wp.find_template_file(str(tmp_path), "Thursday")
         assert result is not None
         assert result.endswith("Thursday.docx")
+
+    def test_colliding_normalized_names_raise(self, wp, tmp_path):
+        """Two files that normalize to the same name must not silently shadow."""
+        (tmp_path / "Thursday Night.docx").write_text("dummy")
+        (tmp_path / "Thursday  Night.docx").write_text("dummy")
+
+        with pytest.raises(TemplateLookupError) as exc:
+            wp.find_template_file(str(tmp_path), "Thursday Night")
+
+        message = str(exc.value)
+        assert "Thursday Night.docx" in message
+        assert "Thursday  Night.docx" in message
+
+    def test_collision_check_does_not_break_normal_lookup(self, wp, tmp_path):
+        """A folder without collisions must resolve exactly as before."""
+        (tmp_path / "Monday.docx").write_text("dummy")
+        (tmp_path / "Thursday Night.docx").write_text("dummy")
+        (tmp_path / "THIRD Thursday.docx").write_text("dummy")
+
+        assert wp.find_template_file(str(tmp_path), "Monday").endswith("Monday.docx")
+        assert wp.find_template_file(str(tmp_path), "Thursday").endswith(
+            "Thursday Night.docx"
+        )
+        assert wp.find_template_file(str(tmp_path), "THIRD Thursday").endswith(
+            "THIRD Thursday.docx"
+        )
 
     def test_replace_dates_logic(self, wp):
         """Should call find/replace with correct patterns."""
@@ -293,7 +319,7 @@ class TestWordProcessor:
 
         # Manually place a malicious path in the cache
         folder_path = str(tmp_path.resolve())
-        wp._template_cache[folder_path] = {"thursday": "/etc/passwd"}
+        wp._template_cache[folder_path] = {"thursday": ["/etc/passwd"]}
 
         success, error = wp.print_document(
             str(tmp_path), "Thursday", date(2026, 1, 15), "Printer"
