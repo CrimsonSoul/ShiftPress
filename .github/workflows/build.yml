@@ -109,6 +109,14 @@ jobs:
           v=$(python -c "import re, pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('src/__init__.py').read_text()).group(1))")
           echo "value=$v" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          # A dispatch is a deliberate release candidate and is kept for a
+          # quarter. A push build is a convenience copy of the current commit
+          # and only needs to outlive a short review, so it expires in a week.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "retention=90" >> "$GITHUB_OUTPUT"
+          else
+            echo "retention=7" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build exe
         run: >
@@ -142,7 +150,7 @@ jobs:
         with:
           name: ShiftPrint-v${{ steps.version.outputs.value }}-${{ steps.version.outputs.sha }}
           path: dist/*.exe
-          retention-days: 90
+          retention-days: ${{ steps.version.outputs.retention }}
 
       # Only ever on an explicit dispatch with the box ticked. On a push event
       # `inputs` is undefined, so this is pinned to the event as well as the flag.
