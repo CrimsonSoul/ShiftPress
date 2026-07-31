@@ -42,8 +42,8 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements-dev.txt
 
-      - name: Generate LCOV coverage
-        run: pytest --cov=src --cov-report=term-missing --cov-report=lcov:coverage.lcov
+      - name: Generate Cobertura coverage
+        run: pytest --cov=src --cov-report=term-missing --cov-report=xml:coverage.xml
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
