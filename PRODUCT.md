@@ -13,14 +13,14 @@ schedules. The exact organizational role is not yet confirmed.
 
 ## Product Purpose
 
-ShiftPress is a Windows desktop utility that turns Microsoft Word schedule
+ShiftPrint is a Windows desktop utility that turns Microsoft Word schedule
 templates into dated print jobs. Success means the operator can deliberately
 print only the schedules needed for a run without reprinting an already-used
 shift.
 
 ## Positioning
 
-ShiftPress combines shift-specific schedule rules, template lookup, date
+ShiftPrint combines shift-specific schedule rules, template lookup, date
 replacement, printer selection, and auditable failure handling in one focused
 operator workflow.
 
@@ -52,8 +52,9 @@ operator workflow.
 
 ## Brand Commitments
 
-- Preserve the ShiftPress name.
-- Existing application icons are available at `icon.ico` and `icon.png`.
+- Preserve the ShiftPrint name.
+- Application icons live at `icon.ico` and `icon.png`, regenerated from
+  `tools/make_icon.py`; see the Icon section of DESIGN.md.
 - The interface should use direct, operational language and avoid implying that
   configured template folders are automatically selected for printing.
 

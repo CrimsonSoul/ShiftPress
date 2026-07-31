@@ -1,6 +1,6 @@
-# ShiftPress
+# ShiftPrint
 
-ShiftPress is a Windows desktop app that batch-prints shift schedule templates via Microsoft Word COM automation.
+ShiftPrint is a Windows desktop app that batch-prints shift schedule templates via Microsoft Word COM automation.
 
 ![Platform](https://img.shields.io/badge/platform-Windows-0a7ea4) ![Language](https://img.shields.io/badge/language-Python%203.12-2ea043) ![UI](https://img.shields.io/badge/ui-Tkinter%2Fttk-4b5563) ![Automation](https://img.shields.io/badge/automation-Word%20COM-1f6feb)
 

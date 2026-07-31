@@ -7,7 +7,7 @@ path before release.
 
 ## Preparation
 
-1. Install dependencies and launch ShiftPress with `start_app.bat`.
+1. Install dependencies and launch ShiftPrint with `start_app.bat`.
 2. Open **Setup → Change…**, choose both template folders and the test printer,
    then select **Done**.
 3. Confirm the collapsed Setup card says **Templates configured** and names the
@@ -53,7 +53,7 @@ all four runs and the state and safety checks pass on Windows.
 The README has no screenshot. Capture one here, where a real Windows instance
 with Microsoft Word exists:
 
-1. Launch ShiftPress with both template folders configured and a printer
+1. Launch ShiftPrint with both template folders configured and a printer
    selected.
 2. Capture the main window to `docs/screenshots/main.png`.
 3. Restore the README `## Preview` section above `## Core Features`:

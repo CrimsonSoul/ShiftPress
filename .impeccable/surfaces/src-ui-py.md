@@ -7,7 +7,7 @@ related_targets: ["src/main.py"]
 
 ## Scope and Mode
 
-- Surface: ShiftPress main Tkinter window (`src/ui.py`)
+- Surface: ShiftPrint main Tkinter window (`src/ui.py`)
 - Mode: Operate
 
 ## Audience and Job
@@ -50,3 +50,7 @@ Windows text-scaling setting.
 
 Shift identity resolved to night-sky blue for Night and daylight amber for Day,
 matching the sun-and-moon reading an operator already carries.
+
+The application icon was resolved as "the pair leads": two offset sheets, Night
+behind and Day in front. Approved comp:
+`.impeccable/mocks/icon-2-two-sheets-approved.png`.
