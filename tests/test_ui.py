@@ -3,10 +3,54 @@ Unit tests for UI module.
 """
 
 import tkinter as tk
+from datetime import date
 from unittest.mock import MagicMock, patch
+
 import pytest
 
-from src.ui import ScheduleAppUI
+from src.constants import COLORS, FONTS
+from src.ui import ScheduleAppUI, _PATH_PLACEHOLDER
+
+
+class _FakeVariable:
+    """Small Tk variable substitute that preserves real get/set behavior."""
+
+    def __init__(self, *args, value=None, **kwargs):
+        del args, kwargs
+        self._value = value
+
+    def get(self):
+        """Return the stored value."""
+        return self._value
+
+    def set(self, value):
+        """Store a new value."""
+        self._value = value
+
+    def trace_add(self, *_args, **_kwargs):
+        """Accept Tk trace registration without requiring a Tcl interpreter."""
+        return "trace"
+
+
+class _FakeDateEntry:
+    """DateEntry substitute with real date storage and mocked widget methods."""
+
+    def __init__(self, *_args, **_kwargs):
+        self._date = None
+        self.constructor_kwargs = _kwargs
+        self.pack = MagicMock()
+        self.grid = MagicMock()
+        self.grid_remove = MagicMock()
+        self.bind = MagicMock()
+        self.config = MagicMock()
+
+    def get_date(self):
+        """Return the current date."""
+        return self._date
+
+    def set_date(self, value):
+        """Set the current date."""
+        self._date = value
 
 
 class TestScheduleAppUI:
@@ -24,38 +68,54 @@ class TestScheduleAppUI:
         # Mock win32print and widget creation to avoid Tcl errors
         with patch("win32print.EnumPrinters", return_value=[]), patch(
             "src.ui.ttk.Style"
-        ), patch("src.ui.ttk.Frame"), patch("src.ui.ttk.Label"), patch(
+        ), patch("src.ui.ttk.Frame") as MockFrame, patch(
+            "src.ui.ttk.Label"
+        ) as MockLabel, patch(
             "src.ui.ttk.LabelFrame"
-        ), patch(
+        ) as MockLabelFrame, patch(
             "src.ui.ttk.Entry"
         ), patch(
             "src.ui.ttk.Button"
-        ), patch(
+        ) as MockTtkButton, patch(
             "src.ui.ttk.Checkbutton"
+        ), patch(
+            "src.ui.ttk.Radiobutton"
         ), patch(
             "src.ui.ttk.OptionMenu"
         ), patch(
             "src.ui.ttk.Progressbar"
         ), patch(
+            "src.ui.ttk.Separator"
+        ), patch(
             "src.ui.tk.Button"
+        ) as MockTkButton, patch(
+            "src.ui.tk.Toplevel"
+        ) as MockToplevel, patch(
+            "src.ui.tk.StringVar", side_effect=_FakeVariable
         ), patch(
-            "src.ui.tk.StringVar"
+            "src.ui.tk.DoubleVar", side_effect=_FakeVariable
         ), patch(
-            "src.ui.tk.DoubleVar"
+            "src.ui.tk.BooleanVar", side_effect=_FakeVariable
         ), patch(
-            "src.ui.tk.BooleanVar"
-        ), patch(
-            "src.ui.DateEntry"
+            "src.ui.DateEntry", side_effect=_FakeDateEntry
         ):
-            ui = ScheduleAppUI(root)
+            ui = ScheduleAppUI(root, today=date(2026, 7, 30))
             # Manually assign mock widgets for testing
             ui.day_entry = MagicMock()
+            ui.day_entry.get.return_value = "C:/Templates/Day"
             ui.night_entry = MagicMock()
+            ui.night_entry.get.return_value = "C:/Templates/Night"
             ui.print_btn = MagicMock()
             ui.status_label = MagicMock()
-            ui.progress_var = MagicMock()
-            ui.printer_var = MagicMock()
-            ui.headers_only_var = MagicMock()
+            ui.progress_var = _FakeVariable(value=0.0)
+            ui._progress_pct = MagicMock()
+            ui.printer_var = _FakeVariable(value="Test Printer")
+            ui._test_ttk_button_class = MockTtkButton
+            ui._test_tk_button_class = MockTkButton
+            ui._test_frame_class = MockFrame
+            ui._test_label_class = MockLabel
+            ui._test_label_frame_class = MockLabelFrame
+            ui._test_toplevel_class = MockToplevel
             yield ui
 
     def test_init(self, ui):
@@ -74,6 +134,365 @@ class TestScheduleAppUI:
         ui.night_entry.get.return_value = "C:/Templates/Night"
         assert ui.get_night_folder() == "C:/Templates/Night"
 
+    def test_defaults_night_today_and_day_tomorrow(self, ui):
+        """Fresh UI state should match the operational handoff workflow."""
+        night, day = ui.get_shift_selections()
+
+        assert (night.enabled, night.mode, night.start_date) == (
+            True,
+            "single",
+            date(2026, 7, 30),
+        )
+        assert (day.enabled, day.mode, day.start_date) == (
+            True,
+            "single",
+            date(2026, 7, 31),
+        )
+
+    def test_date_pickers_keep_the_calendar_dropdown_affordance(self, ui):
+        """Date controls should use tkcalendar's arrow-bearing DateEntry style."""
+        for panel in ui._shift_panels.values():
+            for picker in (
+                panel.single_picker,
+                panel.range_start_picker,
+                panel.range_end_picker,
+            ):
+                assert picker.constructor_kwargs["style"] == "DateEntry"
+
+    def test_shift_selections_keep_independent_modes_and_dates(self, ui):
+        """Changing Night state must not alter the Day selection."""
+        night_panel = ui._shift_panels["night"]
+        day_panel = ui._shift_panels["day"]
+        night_panel.mode_var.set("range")
+        night_panel.range_start_picker.set_date(date(2026, 8, 1))
+        night_panel.range_end_picker.set_date(date(2026, 8, 3))
+        day_panel.enabled_var.set(False)
+        day_panel.single_picker.set_date(date(2026, 8, 8))
+
+        night, day = ui.get_shift_selections()
+
+        assert (
+            night.enabled,
+            night.mode,
+            night.start_date,
+            night.end_date,
+        ) == (
+            True,
+            "range",
+            date(2026, 8, 1),
+            date(2026, 8, 3),
+        )
+        assert (day.enabled, day.mode, day.start_date) == (
+            False,
+            "single",
+            date(2026, 8, 8),
+        )
+
+    def test_disabling_night_does_not_disable_day_controls(self, ui):
+        """Each Include toggle should control only its own date controls."""
+        night_panel = ui._shift_panels["night"]
+        day_panel = ui._shift_panels["day"]
+        night_panel.single_radio = MagicMock()
+        day_panel.single_radio = MagicMock()
+        night_panel.enabled_var.set(False)
+        day_panel.enabled_var.set(True)
+
+        ui._sync_shift_panel_state("night")
+
+        night_panel.single_radio.config.assert_called_with(state="disabled")
+        day_panel.single_radio.config.assert_not_called()
+
+    def test_mode_change_preserves_all_picker_values(self, ui):
+        """Switching modes should hide controls without resetting their dates."""
+        panel = ui._shift_panels["night"]
+        panel.single_picker.set_date(date(2026, 8, 2))
+        panel.range_start_picker.set_date(date(2026, 8, 5))
+        panel.range_end_picker.set_date(date(2026, 8, 7))
+        panel.mode_var.set("range")
+
+        ui._sync_shift_panel_state("night")
+        panel.mode_var.set("single")
+        ui._sync_shift_panel_state("night")
+
+        assert panel.single_picker.get_date() == date(2026, 8, 2)
+        assert panel.range_start_picker.get_date() == date(2026, 8, 5)
+        assert panel.range_end_picker.get_date() == date(2026, 8, 7)
+
+    def test_set_day_folder_uses_primary_text_color(self, ui):
+        """A real saved path must not render as placeholder gray."""
+        ui.set_day_folder("C:/Templates/Day")
+
+        ui.day_entry.config.assert_called_with(foreground=COLORS.text_main)
+        ui.day_entry.insert.assert_called_with(0, "C:/Templates/Day")
+
+    def test_set_night_folder_empty_restores_placeholder(self, ui):
+        """An empty saved path must fall back to the dim placeholder."""
+        ui.set_night_folder("")
+
+        ui.night_entry.config.assert_called_with(foreground=COLORS.text_dim)
+        ui.night_entry.insert.assert_called_with(0, _PATH_PLACEHOLDER)
+
+    def test_single_date_row_matches_range_row_structure(self, ui):
+        """Both date modes must build the same label-above-entry shape."""
+        panel = ui._shift_panels["night"]
+
+        panel.single_picker.pack.assert_any_call(fill="x")
+        panel.range_start_picker.pack.assert_any_call(fill="x")
+        panel.range_end_picker.pack.assert_any_call(fill="x")
+        assert panel.single_picker.grid.call_count == 0
+
+        date_labels = [
+            call
+            for call in ui._test_label_class.call_args_list
+            if call.kwargs.get("text") == "Date"
+        ]
+        assert len(date_labels) == 2  # one per shift panel
+        assert date_labels[0].kwargs["style"] == "CardSub.TLabel"
+
+    def test_window_sizing_derives_from_rendered_content(self, ui, root):
+        """minsize and geometry must come from content, not a hardcoded guess."""
+        root.winfo_reqheight.return_value = 812
+        root.winfo_reqwidth.return_value = 1000
+        root.winfo_screenwidth.return_value = 1920
+        root.winfo_screenheight.return_value = 1080
+        root.minsize.reset_mock()
+        root.geometry.reset_mock()
+
+        ui._apply_content_sizing()
+
+        root.minsize.assert_called_once_with(1040, 812)
+        root.geometry.assert_called_once_with("1040x812")
+
+    def test_manifest_preview_uses_actual_selected_job_count(self, ui):
+        """The visible manifest and action should reflect independent jobs."""
+        ui.manifest_title_label = MagicMock()
+        ui.manifest_label = MagicMock()
+        ui.print_btn = MagicMock()
+
+        ui.refresh_manifest_preview()
+
+        assert (
+            ui.manifest_title_label.config.call_args.kwargs["text"]
+            == "This run: 2 schedules"
+        )
+        manifest_text = ui.manifest_label.config.call_args.kwargs["text"]
+        assert "1. Night — 07/30/2026 — 1 document" in manifest_text
+        assert "2. Day — 07/31/2026 — 1 document" in manifest_text
+        assert "Printer: Test Printer" in manifest_text
+        ui.print_btn.config.assert_called_with(text="Print 2 schedules")
+        ui._shift_panels["night"].count_label.config.assert_called_with(
+            text="Selected · 1 document", style="CountReady.TLabel"
+        )
+        ui._shift_panels["day"].count_label.config.assert_called_with(
+            text="Selected · 1 document", style="CountReady.TLabel"
+        )
+
+    def test_single_schedule_manifest_reads_as_singular(self, ui):
+        """A one-document run must not read 'This run: 1 schedules'."""
+        ui._shift_panels["day"].enabled_var.set(False)
+        ui.manifest_title_label = MagicMock()
+        ui.manifest_label = MagicMock()
+        ui.print_btn = MagicMock()
+
+        ui.refresh_manifest_preview()
+
+        assert (
+            ui.manifest_title_label.config.call_args.kwargs["text"]
+            == "This run: 1 schedule"
+        )
+        ui.print_btn.config.assert_called_with(text="Print 1 schedule")
+
+    def test_excluded_shift_uses_muted_state_not_success(self, ui):
+        """An excluded shift must not render in success green."""
+        ui._shift_panels["day"].enabled_var.set(False)
+        # ttk.Label is patched with one mock class, so every label shares an
+        # instance; give each panel its own to assert on them independently.
+        ui._shift_panels["night"].count_label = MagicMock()
+        ui._shift_panels["day"].count_label = MagicMock()
+        ui.manifest_title_label = MagicMock()
+        ui.manifest_label = MagicMock()
+        ui.print_btn = MagicMock()
+
+        ui.refresh_manifest_preview()
+
+        ui._shift_panels["day"].count_label.config.assert_called_once_with(
+            text="Not included", style="CountMuted.TLabel"
+        )
+
+    def test_invalid_night_range_does_not_flag_valid_day(self, ui):
+        """One shift's bad dates must not accuse the other shift."""
+        night = ui._shift_panels["night"]
+        night.mode_var.set("range")
+        night.range_start_picker.set_date(date(2026, 8, 10))
+        night.range_end_picker.set_date(date(2026, 8, 1))
+        # ttk.Label is patched with one mock class, so every label shares an
+        # instance; give each panel its own to assert on them independently.
+        night.count_label = MagicMock()
+        ui._shift_panels["day"].count_label = MagicMock()
+        ui.manifest_title_label = MagicMock()
+        ui.manifest_label = MagicMock()
+        ui.print_btn = MagicMock()
+
+        ui.refresh_manifest_preview()
+
+        night.count_label.config.assert_called_once_with(
+            text="Check Night date selection", style="CountError.TLabel"
+        )
+        ui._shift_panels["day"].count_label.config.assert_called_once_with(
+            text="Selected · 1 document", style="CountReady.TLabel"
+        )
+        title = ui.manifest_title_label.config.call_args.kwargs["text"]
+        assert title == "This run: Check Night date selection"
+        body = ui.manifest_label.config.call_args.kwargs["text"]
+        assert "Night schedule: End date cannot be before start date" in body
+        ui.print_btn.config.assert_called_with(text="Print schedules")
+
+    def test_manifest_preview_blocks_empty_selection(self, ui):
+        """No included shifts should produce no jobs and no numeric promise."""
+        ui._shift_panels["night"].enabled_var.set(False)
+        ui._shift_panels["day"].enabled_var.set(False)
+        ui.manifest_title_label = MagicMock()
+        ui.manifest_label = MagicMock()
+        ui.print_btn = MagicMock()
+
+        ui.refresh_manifest_preview()
+
+        assert (
+            ui.manifest_title_label.config.call_args.kwargs["text"]
+            == "This run: No schedules selected"
+        )
+        ui.print_btn.config.assert_called_with(text="Print schedules")
+
+    def test_primary_action_uses_themed_ttk_button(self, ui):
+        """The primary action must not use the unreadable macOS classic Tk button."""
+        ttk_print_calls = [
+            call
+            for call in ui._test_ttk_button_class.call_args_list
+            if str(call.kwargs.get("text", "")).startswith("Print")
+        ]
+        tk_print_calls = [
+            call
+            for call in ui._test_tk_button_class.call_args_list
+            if str(call.kwargs.get("text", "")).startswith("Print")
+        ]
+
+        assert len(ttk_print_calls) == 1
+        assert ttk_print_calls[0].kwargs["style"] == "Primary.TButton"
+        assert tk_print_calls == []
+
+    def test_group_titles_use_clean_background_and_custom_card_shells(self, ui):
+        """Section titles should sit on the window without LabelFrame patches."""
+        for style_name, foreground in (
+            ("SetupTitle.TLabel", COLORS.accent),
+            ("NightTitle.TLabel", COLORS.accent),
+            ("DayTitle.TLabel", COLORS.day_accent),
+        ):
+            ui.style.configure.assert_any_call(
+                style_name,
+                background=COLORS.background,
+                foreground=foreground,
+                font=FONTS.card_title,
+            )
+        assert ui._test_label_frame_class.call_count == 0
+        card_styles = {
+            call.kwargs.get("style") for call in ui._test_frame_class.call_args_list
+        }
+        assert {
+            "SetupCard.TFrame",
+            "NightCard.TFrame",
+            "DayCard.TFrame",
+        } <= card_styles
+
+    def test_manifest_uses_plain_bordered_frame_without_empty_title_strip(self, ui):
+        """The manifest should not reserve a blank LabelFrame title channel."""
+        manifest_frames = [
+            call
+            for call in ui._test_frame_class.call_args_list
+            if call.kwargs.get("style") == "Manifest.TFrame"
+        ]
+        assert len(manifest_frames) == 1
+        assert ui._manifest_card is not None
+
+    def test_footer_flows_after_manifest_and_logs_action_is_tertiary(self, ui):
+        """Footer actions should stay compact instead of pinning to the window floor."""
+        ui._footer_frame.pack.assert_any_call(fill="x")
+        assert not any(
+            call.kwargs.get("side") == "bottom"
+            for call in ui._footer_frame.pack.call_args_list
+        )
+        logs_calls = [
+            call
+            for call in ui._test_ttk_button_class.call_args_list
+            if call.kwargs.get("text") == "Open logs"
+        ]
+        assert len(logs_calls) == 1
+        assert logs_calls[0].kwargs["style"] == "Tertiary.TButton"
+
+    def test_processing_mode_uses_danger_style_then_restores_manifest_action(self, ui):
+        """Cancel state and normal print state should each use readable ttk styling."""
+        ui.print_btn = MagicMock()
+
+        ui.set_processing_mode(True)
+        ui.set_processing_mode(False)
+
+        ui.print_btn.config.assert_any_call(text="Cancel", style="Danger.TButton")
+        ui.print_btn.config.assert_any_call(style="Primary.TButton")
+
+    def test_setup_summary_reports_configuration_without_exposing_paths(self, ui):
+        """Collapsed setup should state readiness without crowding the work surface."""
+        ui.setup_summary_label = MagicMock()
+
+        ui.refresh_setup_summary()
+
+        summary = ui.setup_summary_label.config.call_args.kwargs["text"]
+        assert summary == "Templates configured\nTest Printer"
+        assert "C:/Templates" not in summary
+
+    def test_setup_dialog_preserves_main_layout_and_configured_values(self, ui):
+        """Setup should open separately instead of expanding the main work surface."""
+        dialog = ui._setup_dialog
+        dialog.reset_mock()
+        before = (
+            ui.get_day_folder(),
+            ui.get_night_folder(),
+            ui.get_printer_name(),
+        )
+
+        ui._show_setup_dialog()
+        ui._hide_setup_dialog()
+
+        dialog.deiconify.assert_called_once()
+        dialog.lift.assert_called_once()
+        dialog.focus_force.assert_called_once()
+        dialog.withdraw.assert_called_once()
+        assert (
+            ui.get_day_folder(),
+            ui.get_night_folder(),
+            ui.get_printer_name(),
+        ) == before
+
+    def test_set_inputs_enabled_locks_and_restores_shift_controls(self, ui):
+        """Processing lock state should cover every independent shift control."""
+        for panel in ui._shift_panels.values():
+            panel.include_check = MagicMock()
+            panel.single_radio = MagicMock()
+            panel.range_radio = MagicMock()
+
+        ui.set_inputs_enabled(False)
+
+        for panel in ui._shift_panels.values():
+            panel.include_check.config.assert_called_with(state="disabled")
+            panel.single_radio.config.assert_called_with(state="disabled")
+            panel.range_radio.config.assert_called_with(state="disabled")
+            panel.single_picker.config.assert_called_with(state="disabled")
+            panel.range_start_picker.config.assert_called_with(state="disabled")
+            panel.range_end_picker.config.assert_called_with(state="disabled")
+
+        ui.set_inputs_enabled(True)
+
+        for panel in ui._shift_panels.values():
+            panel.include_check.config.assert_called_with(state="normal")
+
     def test_set_print_button_state(self, ui):
         """Should update button state."""
         ui.set_print_button_state("disabled")
@@ -85,7 +504,7 @@ class TestScheduleAppUI:
         ui.status_label.config.assert_called_with(
             text="Processing...", style="Sub.TLabel"
         )
-        ui.progress_var.set.assert_called_with(50.0)
+        assert ui.progress_var.get() == 50.0
 
     def test_update_status_complete_style(self, ui):
         """Should apply success style when message contains 'complete'."""
@@ -121,8 +540,3 @@ class TestScheduleAppUI:
         # Verify Escape was bound (check bind call args for "<Escape>")
         bound_keys = [call[0][0] for call in ui.root.bind.call_args_list]
         assert "<Escape>" in bound_keys
-
-    def test_get_headers_footers_only(self, ui):
-        """Should return boolean from headers-only var."""
-        ui.headers_only_var.get.return_value = True
-        assert ui.get_headers_footers_only() is True

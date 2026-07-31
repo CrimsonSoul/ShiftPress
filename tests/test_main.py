@@ -4,6 +4,7 @@ Integration tests for main application module.
 
 import csv
 import sys
+from dataclasses import replace
 from datetime import date
 from unittest.mock import MagicMock, patch
 
@@ -11,17 +12,35 @@ import pytest
 
 # Import the class directly, then grab the actual module from sys.modules
 # (src.main as a name is shadowed by the main() function exported in src.__init__.py)
-from src.main import ShiftAutomatorApp, _compute_batch_size
+from src.main import ShiftPressApp, _BatchRequest
+from src.print_manifest import PrintJob, ShiftSelection
 
 main_module = sys.modules["src.main"]
 
 
-class TestShiftAutomatorApp:
-    """Tests for ShiftAutomatorApp class."""
+def _request(*jobs: PrintJob) -> _BatchRequest:
+    """Build a validated worker request with fixed configuration values."""
+    return _BatchRequest(
+        manifest=tuple(jobs),
+        printer_name="Test Printer",
+        day_folder="/tmp/day",
+        night_folder="/tmp/night",
+    )
+
+
+def _run_scheduled_callbacks(app: ShiftPressApp) -> None:
+    """Execute callbacks captured by the mocked Tk root."""
+    for call in app.root.after.call_args_list:
+        callback = call.args[1]
+        callback()
+
+
+class TestShiftPressApp:
+    """Tests for ShiftPressApp class."""
 
     @pytest.fixture
     def app(self):
-        """Create a ShiftAutomatorApp with mocked UI and dependencies."""
+        """Create a ShiftPressApp with mocked UI and dependencies."""
         with patch.object(main_module, "ScheduleAppUI") as MockUI, patch.object(
             main_module, "ConfigManager"
         ) as MockConfig:
@@ -31,9 +50,24 @@ class TestShiftAutomatorApp:
             mock_ui.get_night_folder.return_value = "/tmp/night"
             mock_ui.get_printer_name.return_value = "Test Printer"
             mock_ui.get_available_printers.return_value = ["Test Printer"]
-            mock_ui.get_start_date.return_value = date(2026, 1, 14)
-            mock_ui.get_end_date.return_value = date(2026, 1, 14)
-            mock_ui.get_headers_footers_only.return_value = False
+            mock_ui.get_shift_selections.return_value = (
+                ShiftSelection(
+                    shift_type="night",
+                    enabled=True,
+                    mode="single",
+                    start_date=date(2026, 1, 14),
+                    end_date=date(2026, 1, 14),
+                    folder="/tmp/night",
+                ),
+                ShiftSelection(
+                    shift_type="day",
+                    enabled=True,
+                    mode="single",
+                    start_date=date(2026, 1, 15),
+                    end_date=date(2026, 1, 15),
+                    folder="/tmp/day",
+                ),
+            )
             mock_ui.progress_var = MagicMock()
             mock_ui.progress_var.get.return_value = 0.0
             mock_ui.print_btn = MagicMock()
@@ -43,28 +77,72 @@ class TestShiftAutomatorApp:
                 day_folder="", night_folder="", printer_name=""
             )
 
-            app = ShiftAutomatorApp(mock_root)
+            app = ShiftPressApp(mock_root)
             yield app
 
     def test_validate_inputs_missing_day_folder(self, app):
-        """Should fail validation when day folder is empty."""
-        app.ui.get_day_folder.return_value = ""
-        is_valid, error = app._validate_inputs()
-        assert is_valid is False
+        """An included Day shift should require its own folder."""
+        night, day = app.ui.get_shift_selections.return_value
+        app.ui.get_shift_selections.return_value = (
+            night,
+            replace(day, folder=""),
+        )
+
+        request, error = app._validate_inputs()
+
+        assert request is None
         assert "Day Templates" in error
 
     def test_validate_inputs_missing_night_folder(self, app):
-        """Should fail validation when night folder is empty."""
-        app.ui.get_night_folder.return_value = ""
-        is_valid, error = app._validate_inputs()
-        assert is_valid is False
+        """An included Night shift should require its own folder."""
+        night, day = app.ui.get_shift_selections.return_value
+        app.ui.get_shift_selections.return_value = (
+            replace(night, folder=""),
+            day,
+        )
+
+        request, error = app._validate_inputs()
+
+        assert request is None
         assert "Night Templates" in error
+
+    def test_validate_inputs_ignores_disabled_shift_folder(self, app):
+        """A disabled shift must not validate or block on its folder."""
+        night, day = app.ui.get_shift_selections.return_value
+        app.ui.get_shift_selections.return_value = (
+            night,
+            replace(day, enabled=False, folder=""),
+        )
+
+        with patch.object(
+            main_module, "validate_folder_path", return_value=(True, None)
+        ) as mock_validate, patch.object(main_module, "WordProcessor") as MockWP:
+            MockWP.return_value.find_template_file.return_value = "/tmp/template.docx"
+            request, error = app._validate_inputs()
+
+        assert request is not None
+        assert error is None
+        mock_validate.assert_called_once_with("/tmp/night")
+        assert [job.shift_type for job in request.manifest] == ["night"]
+
+    def test_validate_inputs_requires_at_least_one_shift(self, app):
+        """Printing without Night or Day intent must stop before environment checks."""
+        night, day = app.ui.get_shift_selections.return_value
+        app.ui.get_shift_selections.return_value = (
+            replace(night, enabled=False),
+            replace(day, enabled=False),
+        )
+
+        request, error = app._validate_inputs()
+
+        assert request is None
+        assert error == "Select at least one Night or Day schedule"
 
     def test_validate_inputs_missing_printer(self, app):
         """Should fail validation when no printer selected."""
         app.ui.get_printer_name.return_value = "Choose Printer"
-        is_valid, error = app._validate_inputs()
-        assert is_valid is False
+        request, error = app._validate_inputs()
+        assert request is None
         assert "printer" in error.lower()
 
     def test_validate_inputs_printer_not_available(self, app):
@@ -74,59 +152,108 @@ class TestShiftAutomatorApp:
         with patch.object(
             main_module, "validate_folder_path", return_value=(True, None)
         ):
-            is_valid, error = app._validate_inputs()
-        assert is_valid is False
+            request, error = app._validate_inputs()
+        assert request is None
         assert "not available" in (error or "").lower()
 
     def test_validate_inputs_missing_dates(self, app):
-        """Should fail validation when dates are missing."""
-        app.ui.get_start_date.return_value = None
-        with patch.object(
-            main_module, "validate_folder_path", return_value=(True, None)
-        ):
-            is_valid, error = app._validate_inputs()
-        assert is_valid is False
-        assert "date" in error.lower()
+        """Each included shift should require its active date."""
+        night, day = app.ui.get_shift_selections.return_value
+        app.ui.get_shift_selections.return_value = (
+            replace(night, start_date=None),
+            day,
+        )
+
+        request, error = app._validate_inputs()
+
+        assert request is None
+        assert error == "Select a Night date"
+
+    def test_validate_inputs_labels_invalid_independent_range(self, app):
+        """A reversed range should identify the affected shift."""
+        night, day = app.ui.get_shift_selections.return_value
+        app.ui.get_shift_selections.return_value = (
+            night,
+            replace(
+                day,
+                mode="range",
+                start_date=date(2026, 1, 18),
+                end_date=date(2026, 1, 16),
+            ),
+        )
+
+        request, error = app._validate_inputs()
+
+        assert request is None
+        assert error == "Day schedule: End date cannot be before start date"
 
     def test_validate_inputs_success(self, app):
-        """Should validate inputs when environment and templates look good."""
+        """Successful validation should return the exact independent manifest."""
 
         with patch.object(
             main_module, "validate_folder_path", return_value=(True, None)
         ), patch.object(main_module, "WordProcessor") as MockWP:
             mock_wp = MockWP.return_value
             mock_wp.find_template_file.return_value = "/tmp/template.docx"
-            is_valid, error = app._validate_inputs()
+            request, error = app._validate_inputs()
 
-        assert is_valid is True
+        assert request is not None
         assert error is None
+        assert [(job.date, job.shift_type) for job in request.manifest] == [
+            (date(2026, 1, 14), "night"),
+            (date(2026, 1, 15), "day"),
+        ]
 
     @patch.object(main_module, "WordProcessor")
-    @patch.object(main_module, "validate_folder_path", return_value=(True, None))
-    def test_process_batch_success(self, mock_validate, mock_wp_class, app):
-        """Should process all days and report success."""
+    def test_process_batch_uses_exact_manifest_order(self, mock_wp_class, app):
+        """The worker should print Night today followed by Day tomorrow."""
         mock_wp = MagicMock()
         mock_wp.print_document.return_value = (True, None)
         mock_wp.__enter__ = MagicMock(return_value=mock_wp)
         mock_wp.__exit__ = MagicMock(return_value=False)
         mock_wp_class.return_value = mock_wp
+        request = _request(
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/tmp/night",
+            ),
+            PrintJob(
+                date=date(2026, 1, 15),
+                shift_type="day",
+                template_name="THIRD Thursday",
+                folder="/tmp/day",
+            ),
+        )
 
-        params = {
-            "start_date": date(2026, 1, 14),
-            "end_date": date(2026, 1, 14),
-            "day_folder": "/tmp/day",
-            "night_folder": "/tmp/night",
-            "printer_name": "Test Printer",
-        }
+        app._process_batch(request)
+        _run_scheduled_callbacks(app)
 
-        app._process_batch(params)
-
-        # Should print both day and night shift
-        assert mock_wp.print_document.call_count == 2
+        assert [call.args for call in mock_wp.print_document.call_args_list] == [
+            (
+                "/tmp/night",
+                "Wednesday Night",
+                date(2026, 1, 14),
+                "Test Printer",
+            ),
+            (
+                "/tmp/day",
+                "THIRD Thursday",
+                date(2026, 1, 15),
+                "Test Printer",
+            ),
+        ]
+        app.ui.show_info.assert_called_once_with(
+            "Success",
+            "All 2 selected schedules have been processed and sent to the printer.",
+        )
+        status_messages = [call.args[0] for call in app.ui.update_status.call_args_list]
+        assert any("(1/2)" in message for message in status_messages)
+        assert any("(2/2)" in message for message in status_messages)
 
     @patch.object(main_module, "WordProcessor")
-    @patch.object(main_module, "validate_folder_path", return_value=(True, None))
-    def test_process_batch_cancel(self, mock_validate, mock_wp_class, app):
+    def test_process_batch_cancel_before_first_job(self, mock_wp_class, app):
         """Should stop processing when cancel event is set."""
         mock_wp = MagicMock()
         mock_wp.print_document.return_value = (True, None)
@@ -136,19 +263,51 @@ class TestShiftAutomatorApp:
 
         # Set cancel before processing starts
         app._cancel_event.set()
+        request = _request(
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/tmp/night",
+            )
+        )
 
-        params = {
-            "start_date": date(2026, 1, 14),
-            "end_date": date(2026, 1, 16),
-            "day_folder": "/tmp/day",
-            "night_folder": "/tmp/night",
-            "printer_name": "Test Printer",
-        }
-
-        app._process_batch(params)
+        app._process_batch(request)
 
         # Should not have printed anything (cancelled immediately)
         assert mock_wp.print_document.call_count == 0
+
+    @patch.object(main_module, "WordProcessor")
+    def test_process_batch_cancel_between_selected_jobs(self, mock_wp_class, app):
+        """Cancellation after one document must prevent the next manifest job."""
+        mock_wp = MagicMock()
+        mock_wp.__enter__ = MagicMock(return_value=mock_wp)
+        mock_wp.__exit__ = MagicMock(return_value=False)
+
+        def print_once(*_args):
+            app._cancel_event.set()
+            return True, None
+
+        mock_wp.print_document.side_effect = print_once
+        mock_wp_class.return_value = mock_wp
+        request = _request(
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/tmp/night",
+            ),
+            PrintJob(
+                date=date(2026, 1, 15),
+                shift_type="day",
+                template_name="THIRD Thursday",
+                folder="/tmp/day",
+            ),
+        )
+
+        app._process_batch(request)
+
+        assert mock_wp.print_document.call_count == 1
 
     def test_on_close_without_active_thread(self, app):
         """Should destroy window immediately if no thread is running."""
@@ -212,13 +371,10 @@ class TestShiftAutomatorApp:
         app.ui.set_print_button_state.assert_called_with("disabled")
 
     @patch.object(main_module, "WordProcessor")
-    @patch.object(main_module, "validate_folder_path", return_value=(True, None))
-    def test_process_batch_tracks_failures_with_summary(
-        self, mock_validate, mock_wp_class, app
-    ):
+    def test_process_batch_tracks_failures_with_summary(self, mock_wp_class, app):
         """Should call _show_failure_summary with the correct failures."""
         mock_wp = MagicMock()
-        # Day shift fails, night shift succeeds
+        # Night fails, then Day succeeds.
         mock_wp.print_document.side_effect = [
             (False, "Template not found"),
             (True, None),
@@ -226,33 +382,31 @@ class TestShiftAutomatorApp:
         mock_wp.__enter__ = MagicMock(return_value=mock_wp)
         mock_wp.__exit__ = MagicMock(return_value=False)
         mock_wp_class.return_value = mock_wp
-
-        params = {
-            "start_date": date(2026, 1, 14),
-            "end_date": date(2026, 1, 14),
-            "day_folder": "/tmp/day",
-            "night_folder": "/tmp/night",
-            "printer_name": "Test Printer",
-        }
+        request = _request(
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/tmp/night",
+            ),
+            PrintJob(
+                date=date(2026, 1, 15),
+                shift_type="day",
+                template_name="THIRD Thursday",
+                folder="/tmp/day",
+            ),
+        )
 
         with patch.object(app, "_show_failure_summary") as mock_summary:
-            app._process_batch(params)
-
-            # The callback is scheduled via _safe_after — find it and call it
-            # to trigger _show_failure_summary
-            for call in app.root.after.call_args_list:
-                callback = call[0][1] if len(call[0]) > 1 else None
-                if callback is not None:
-                    try:
-                        callback()
-                    except Exception:
-                        pass
+            app._process_batch(request)
+            _run_scheduled_callbacks(app)
 
             mock_summary.assert_called_once()
             failures = mock_summary.call_args[0][0]
             assert len(failures) == 1
-            assert failures[0]["shift"] == "day"
+            assert failures[0]["shift"] == "night"
             assert "Template not found" in failures[0]["error"]
+            assert mock_wp.print_document.call_count == 2
 
     def test_write_failure_report_creates_csv(self, app, tmp_path):
         """_write_failure_report should create a CSV with correct headers."""
@@ -305,9 +459,21 @@ class TestShiftAutomatorApp:
         (day_dir / "Wednesday.docx").write_text("dummy")
         (night_dir / "Wednesday Night.docx").write_text("dummy")
 
-        ok, err = app._preflight_templates(
-            str(day_dir), str(night_dir), date(2026, 1, 14), date(2026, 1, 14)
+        manifest = (
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder=str(night_dir),
+            ),
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="day",
+                template_name="Wednesday",
+                folder=str(day_dir),
+            ),
         )
+        ok, err = app._preflight_templates(manifest)
         assert ok is True
         assert err is None
         # Should stash the WordProcessor for reuse
@@ -323,9 +489,21 @@ class TestShiftAutomatorApp:
         # Only create night template, day is missing
         (night_dir / "Wednesday.docx").write_text("dummy")
 
-        ok, err = app._preflight_templates(
-            str(day_dir), str(night_dir), date(2026, 1, 14), date(2026, 1, 14)
+        manifest = (
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder=str(night_dir),
+            ),
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="day",
+                template_name="Wednesday",
+                folder=str(day_dir),
+            ),
         )
+        ok, err = app._preflight_templates(manifest)
         assert ok is False
         assert "Missing required templates" in err
 
@@ -343,12 +521,38 @@ class TestShiftAutomatorApp:
             mock_wp.find_template_file.side_effect = main_module.TemplateLookupError(
                 "Ambiguous match"
             )
-            ok, err = app._preflight_templates(
-                str(day_dir), str(night_dir), date(2026, 1, 14), date(2026, 1, 14)
+            manifest = (
+                PrintJob(
+                    date=date(2026, 1, 14),
+                    shift_type="night",
+                    template_name="Wednesday Night",
+                    folder=str(night_dir),
+                ),
             )
+            ok, err = app._preflight_templates(manifest)
 
         assert ok is False
         assert "lookup error" in err.lower()
+
+    def test_preflight_checks_only_selected_templates(self, app):
+        """Preflight must not inspect templates absent from the manifest."""
+        manifest = (
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/night",
+            ),
+        )
+
+        with patch.object(main_module, "WordProcessor") as MockWP:
+            mock_wp = MockWP.return_value
+            mock_wp.find_template_file.return_value = "/night/Wednesday Night.docx"
+            ok, err = app._preflight_templates(manifest)
+
+        assert ok is True
+        assert err is None
+        mock_wp.find_template_file.assert_called_once_with("/night", "Wednesday Night")
 
     def test_load_config_populates_entries(self, app):
         """_load_config should populate UI entries from saved config."""
@@ -356,7 +560,6 @@ class TestShiftAutomatorApp:
             day_folder="/saved/day",
             night_folder="/saved/night",
             printer_name="Saved Printer",
-            headers_footers_only=True,
         )
         app.config_manager.load.return_value = mock_config
 
@@ -364,14 +567,14 @@ class TestShiftAutomatorApp:
         app.ui.day_entry = MagicMock()
         app.ui.night_entry = MagicMock()
         app.ui.printer_var = MagicMock()
-        app.ui.headers_only_var = MagicMock()
+        app.ui.refresh_setup_summary.reset_mock()
 
         app._load_config()
 
-        app.ui.day_entry.insert.assert_called_with(0, "/saved/day")
-        app.ui.night_entry.insert.assert_called_with(0, "/saved/night")
+        app.ui.set_day_folder.assert_called_with("/saved/day")
+        app.ui.set_night_folder.assert_called_with("/saved/night")
         app.ui.printer_var.set.assert_called_with("Saved Printer")
-        app.ui.headers_only_var.set.assert_called_with(True)
+        app.ui.refresh_setup_summary.assert_called_once()
 
     def test_load_config_exception_shows_warning(self, app):
         """_load_config should show warning on load failure."""
@@ -404,8 +607,7 @@ class TestShiftAutomatorApp:
         assert "Failure report saved to" in msg
 
     @patch.object(main_module, "WordProcessor")
-    @patch.object(main_module, "validate_folder_path", return_value=(True, None))
-    def test_process_batch_exception_resets_ui(self, mock_validate, mock_wp_class, app):
+    def test_process_batch_exception_resets_ui(self, mock_wp_class, app):
         """_process_batch should reset UI to normal state even when an exception occurs."""
         mock_wp = MagicMock()
         mock_wp.__enter__ = MagicMock(return_value=mock_wp)
@@ -413,16 +615,16 @@ class TestShiftAutomatorApp:
         # Blow up during print
         mock_wp.print_document.side_effect = RuntimeError("COM catastrophe")
         mock_wp_class.return_value = mock_wp
+        request = _request(
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/tmp/night",
+            )
+        )
 
-        params = {
-            "start_date": date(2026, 1, 14),
-            "end_date": date(2026, 1, 14),
-            "day_folder": "/tmp/day",
-            "night_folder": "/tmp/night",
-            "printer_name": "Test Printer",
-        }
-
-        app._process_batch(params)
+        app._process_batch(request)
 
         # The finally block schedules reset_ui via _safe_after.
         # Execute all scheduled callbacks.
@@ -440,34 +642,37 @@ class TestShiftAutomatorApp:
         app.ui.set_inputs_enabled.assert_called_with(True)
         # Print button should be re-enabled
         app.ui.set_print_button_state.assert_called_with("normal")
+        app.ui.set_processing_mode.assert_called_with(False)
 
     @patch.object(main_module, "WordProcessor")
-    @patch.object(main_module, "validate_folder_path", return_value=(True, None))
-    def test_process_batch_propagates_headers_footers_only(
-        self, mock_validate, mock_wp_class, app
+    def test_process_batch_saves_configuration_and_consumes_preflight_cache(
+        self, mock_wp_class, app
     ):
-        """_process_batch should forward headers_footers_only to print_document."""
-        mock_wp = MagicMock()
-        mock_wp.print_document.return_value = (True, None)
-        mock_wp.__enter__ = MagicMock(return_value=mock_wp)
-        mock_wp.__exit__ = MagicMock(return_value=False)
-        mock_wp_class.return_value = mock_wp
+        """The worker should persist setup values and consume the warm preflight object."""
+        warm_wp = MagicMock()
+        warm_wp.__enter__ = MagicMock(return_value=warm_wp)
+        warm_wp.__exit__ = MagicMock(return_value=False)
+        warm_wp.print_document.return_value = (True, None)
+        app._preflight_wp = warm_wp
+        request = _request(
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/tmp/night",
+            )
+        )
 
-        params = {
-            "start_date": date(2026, 1, 14),
-            "end_date": date(2026, 1, 14),
-            "day_folder": "/tmp/day",
-            "night_folder": "/tmp/night",
-            "printer_name": "Test Printer",
-            "headers_footers_only": True,
-        }
+        app._process_batch(request)
 
-        app._process_batch(params)
-
-        # Both calls (day + night) should pass headers_footers_only=True
-        assert mock_wp.print_document.call_count == 2
-        for call in mock_wp.print_document.call_args_list:
-            assert call.kwargs.get("headers_footers_only") is True
+        saved = app.config_manager.save.call_args.args[0]
+        assert (
+            saved.day_folder,
+            saved.night_folder,
+            saved.printer_name,
+        ) == ("/tmp/day", "/tmp/night", "Test Printer")
+        assert app._preflight_wp is None
+        mock_wp_class.assert_not_called()
 
     def test_write_failure_report_exception_returns_none(self, app, tmp_path):
         """_write_failure_report should return None when writing fails."""
@@ -485,34 +690,52 @@ class TestShiftAutomatorApp:
 
         assert result is None
 
-
-    def test_start_processing_batch_params_strip_quotes(self, app):
-        """start_processing should strip surrounding quotes from folder paths in batch_params."""
-        # Make validation pass
-        app.ui.get_day_folder.return_value = '"C:\\Users\\day"'
-        app.ui.get_night_folder.return_value = "'C:\\Users\\night'"
-
-        captured_params = {}
-
-        def capture_process_batch(params):
-            captured_params.update(params)
-
+    def test_validate_inputs_normalizes_folder_quotes_once(self, app):
+        """Validated request and jobs should share the same normalized paths."""
+        night, day = app.ui.get_shift_selections.return_value
+        app.ui.get_shift_selections.return_value = (
+            replace(night, folder="'C:\\Users\\night'"),
+            replace(day, folder='"C:\\Users\\day"'),
+        )
         with patch.object(
             main_module, "validate_folder_path", return_value=(True, None)
-        ), patch.object(main_module, "WordProcessor") as MockWP, patch.object(
-            app, "_process_batch", side_effect=capture_process_batch
-        ):
+        ), patch.object(main_module, "WordProcessor") as MockWP:
             mock_wp = MockWP.return_value
             mock_wp.find_template_file.return_value = "/tmp/template.docx"
+            request, error = app._validate_inputs()
 
+        assert request is not None
+        assert error is None
+        assert request.day_folder == "C:\\Users\\day"
+        assert request.night_folder == "C:\\Users\\night"
+        assert {job.folder for job in request.manifest} == {
+            "C:\\Users\\day",
+            "C:\\Users\\night",
+        }
+
+    def test_large_batch_confirmation_uses_manifest_document_count(self, app):
+        """Large-batch confirmation should describe concrete selected jobs."""
+        request = MagicMock()
+        request.manifest = tuple(
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/night",
+            )
+            for _index in range(30)
+        )
+        app.ui.ask_yes_no.return_value = False
+
+        with patch.object(
+            app, "_validate_inputs", return_value=(request, None)
+        ), patch.object(main_module.threading, "Thread") as MockThread:
             app.start_processing()
 
-            # Wait for the thread to finish (it runs our mock immediately)
-            if app._processing_thread:
-                app._processing_thread.join(timeout=5)
-
-            assert captured_params["day_folder"] == "C:\\Users\\day"
-            assert captured_params["night_folder"] == "C:\\Users\\night"
+        title, message = app.ui.ask_yes_no.call_args.args
+        assert title == "Large Batch Confirm"
+        assert "30 selected schedules" in message
+        MockThread.assert_not_called()
 
     def test_show_failure_summary_with_none_report_path(self, app, tmp_path):
         """_show_failure_summary should handle report_path=None gracefully."""
@@ -535,31 +758,3 @@ class TestShiftAutomatorApp:
         assert "Failure report saved to" not in msg
         # Should still show the log file path
         assert "Log file" in msg
-
-
-class TestComputeBatchSize:
-    """Tests for _compute_batch_size function."""
-
-    def test_single_day(self):
-        """Single day should return 1 day and 2 jobs."""
-        total_days, total_jobs = _compute_batch_size(
-            date(2026, 1, 14), date(2026, 1, 14)
-        )
-        assert total_days == 1
-        assert total_jobs == 2
-
-    def test_week_range(self):
-        """A week should return 7 days and 14 jobs."""
-        total_days, total_jobs = _compute_batch_size(
-            date(2026, 1, 14), date(2026, 1, 20)
-        )
-        assert total_days == 7
-        assert total_jobs == 14
-
-    def test_month_range(self):
-        """A 30-day range should return 30 days and 60 jobs."""
-        total_days, total_jobs = _compute_batch_size(
-            date(2026, 1, 1), date(2026, 1, 30)
-        )
-        assert total_days == 30
-        assert total_jobs == 60

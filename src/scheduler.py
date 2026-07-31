@@ -1,5 +1,5 @@
 """
-Date and scheduling logic for Shift Automator application.
+Date and scheduling logic for ShiftPress application.
 
 This module handles date calculations, including special scheduling rules
 like third Thursday detection.
@@ -27,12 +27,28 @@ logger = get_logger(__name__)
 # Hard-coded because both strftime("%A"/"%B") and calendar.day_name/month_name
 # are locale-dependent and return non-English strings on non-English Windows.
 _EN_DAY_NAMES: list[str] = [
-    "Monday", "Tuesday", "Wednesday", "Thursday",
-    "Friday", "Saturday", "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
 ]
 _EN_MONTH_NAMES: list[str] = [
-    "", "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
+    "",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ]
 
 

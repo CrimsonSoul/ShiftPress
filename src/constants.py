@@ -1,5 +1,5 @@
 """
-Constants for Shift Automator application.
+Constants for ShiftPress application.
 
 This module contains all named constants used throughout the application
 to avoid magic numbers and strings.
@@ -30,18 +30,11 @@ __all__ = [
     "CONFIG_FILENAME",
     "LOG_FILENAME",
     "WINDOW_WIDTH",
-    "WINDOW_HEIGHT",
     "WINDOW_RESIZABLE",
     "PROGRESS_MAX",
     "MAX_DAYS_RANGE",
     "COM_RETRIES",
     "COM_RETRY_DELAY",
-    "WD_PRIMARY_HEADER_STORY",
-    "WD_EVEN_PAGES_HEADER_STORY",
-    "WD_PRIMARY_FOOTER_STORY",
-    "WD_EVEN_PAGES_FOOTER_STORY",
-    "WD_FIRST_PAGE_HEADER_STORY",
-    "WD_FIRST_PAGE_FOOTER_STORY",
     "WD_FIND_CONTINUE",
     "WD_REPLACE_ALL",
     "PROTECTION_ALLOW_FORM_FIELDS",
@@ -49,7 +42,6 @@ __all__ = [
     "MAX_PREFLIGHT_MISSING_SHOWN",
     "MAX_FAILURE_SUMMARY_SHOWN",
     "MAX_FILENAME_LENGTH",
-    "WINDOW_MIN_HEIGHT",
     "AUTO_RESIZE_MIN_WIDTH",
     "AUTO_RESIZE_MIN_HEIGHT",
     "COLORS",
@@ -81,7 +73,9 @@ CLOSE_PROMPT: Final = -2  # wdPromptToSaveChanges
 
 # Windows printer enumeration constants (win32print flags)
 PRINTER_ENUM_LOCAL: Final = 2  # PRINTER_ENUM_LOCAL
-PRINTER_ENUM_CONNECTIONS: Final = 4  # PRINTER_ENUM_CONNECTIONS (user-connected printers)
+PRINTER_ENUM_CONNECTIONS: Final = (
+    4  # PRINTER_ENUM_CONNECTIONS (user-connected printers)
+)
 
 # UI default labels
 DEFAULT_PRINTER_LABEL: Final = "Choose Printer"
@@ -91,11 +85,10 @@ DOCX_EXTENSION: Final = ".docx"
 
 # Configuration
 CONFIG_FILENAME: Final = "config.json"
-LOG_FILENAME: Final = "shift_automator.log"
+LOG_FILENAME: Final = "shiftpress.log"
 
 # UI Constants
-WINDOW_WIDTH: Final = 640
-WINDOW_HEIGHT: Final = 820
+WINDOW_WIDTH: Final = 1040
 WINDOW_RESIZABLE: Final = True
 
 # Progress bar
@@ -105,30 +98,20 @@ PROGRESS_MAX: Final = 100
 MAX_DAYS_RANGE: Final = 366
 
 # Batch processing thresholds
-LARGE_BATCH_THRESHOLD: Final = 30  # days — prompt user for confirmation
+LARGE_BATCH_THRESHOLD: Final = 30  # documents — prompt user for confirmation
 MAX_PREFLIGHT_MISSING_SHOWN: Final = 10  # missing templates shown before truncation
 MAX_FAILURE_SUMMARY_SHOWN: Final = 5  # failures shown in the summary dialog
 
 # Path safety
 MAX_FILENAME_LENGTH: Final = 255
 
-# UI sizing limits
-WINDOW_MIN_HEIGHT: Final = 720
+# UI sizing limits (height is derived from rendered content at launch)
 AUTO_RESIZE_MIN_WIDTH: Final = 320
 AUTO_RESIZE_MIN_HEIGHT: Final = 400
 
 # Retry settings for COM calls
 COM_RETRIES: Final = 5
 COM_RETRY_DELAY: Final = 1  # seconds
-
-# Word story types (used to target header/footer-only replacements)
-# https://learn.microsoft.com/en-us/office/vba/api/word.wdstorytype
-WD_EVEN_PAGES_HEADER_STORY: Final = 6  # wdEvenPagesHeaderStory
-WD_PRIMARY_HEADER_STORY: Final = 7  # wdPrimaryHeaderStory
-WD_EVEN_PAGES_FOOTER_STORY: Final = 8  # wdEvenPagesFooterStory
-WD_PRIMARY_FOOTER_STORY: Final = 9  # wdPrimaryFooterStory
-WD_FIRST_PAGE_HEADER_STORY: Final = 10  # wdFirstPageHeaderStory
-WD_FIRST_PAGE_FOOTER_STORY: Final = 11  # wdFirstPageFooterStory
 
 # Word Find/Replace constants
 # See: https://learn.microsoft.com/en-us/office/vba/api/word.wdfindwrap
@@ -141,16 +124,20 @@ WD_REPLACE_ALL: Final = 2  # wdReplaceAll
 class Colors:
     """Color scheme constants for the application UI."""
 
-    background: str = "#0D0D12"  # Near-black depth
-    surface: str = "#16161D"  # Modern card surface
-    accent: str = "#4D7CFF"  # Tech blue
-    text_main: str = "#FFFFFF"  # High contrast
-    text_dim: str = "#71717A"  # Muted secondary
-    success: str = "#10B981"  # Emerald
-    error: str = "#EF4444"  # Red/Danger
-    border: str = "#27272A"  # Subtle border
-    secondary: str = "#1E1E26"  # Button hover
-    accent_hover: str = "#3A6DFF"  # Accent hover state
+    background: str = "#16171A"  # Window charcoal
+    surface: str = "#24262A"  # Raised graphite work surface
+    input: str = "#1B1C20"  # Recessed native input surface
+    accent: str = "#F2B340"  # Press amber
+    day_accent: str = "#38BDF8"  # Sky-400 — Day shift identity
+    action: str = "#1267C9"  # Saturated print-action blue
+    action_hover: str = "#0F56A8"  # Deeper action blue
+    text_main: str = "#F4F4F5"  # Zinc-100 — warm off-white
+    text_dim: str = "#B5B7BD"  # High-contrast supporting text
+    success: str = "#4ADE80"  # Emerald-400
+    error: str = "#FB7185"  # Rose-400 — softer red
+    border: str = "#5A5D64"  # Divider steel
+    secondary: str = "#303238"  # Secondary controls and hover states
+    accent_hover: str = "#D99A25"  # Deeper amber press state
 
 
 FontSpec = Union[tuple[str, int], tuple[str, int, str]]
@@ -180,11 +167,12 @@ _FONT_FAMILY: Final = _font_family()
 class Fonts:
     """Font configuration for the application UI."""
 
-    main: FontSpec = (_FONT_FAMILY, 10)
-    bold: FontSpec = (_FONT_FAMILY, 10, "bold")
+    main: FontSpec = (_FONT_FAMILY, 11)
+    bold: FontSpec = (_FONT_FAMILY, 11, "bold")
     header: FontSpec = (_FONT_FAMILY, 24, "bold")
-    sub: FontSpec = (_FONT_FAMILY, 9)
-    button: FontSpec = (_FONT_FAMILY, 11, "bold")
+    card_title: FontSpec = (_FONT_FAMILY, 13, "bold")
+    sub: FontSpec = (_FONT_FAMILY, 10)
+    button: FontSpec = (_FONT_FAMILY, 14, "bold")
 
 
 # Global color and font instances

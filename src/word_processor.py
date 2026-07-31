@@ -1,5 +1,5 @@
 """
-Word document processing for Shift Automator application.
+Word document processing for ShiftPress application.
 
 This module handles all interactions with Microsoft Word via COM automation,
 including document opening, date replacement, and printing.
@@ -29,19 +29,12 @@ from .constants import (
     CLOSE_NO_SAVE,
     COM_RETRIES,
     COM_RETRY_DELAY,
-    WD_PRIMARY_HEADER_STORY,
-    WD_EVEN_PAGES_HEADER_STORY,
-    WD_PRIMARY_FOOTER_STORY,
-    WD_EVEN_PAGES_FOOTER_STORY,
-    WD_FIRST_PAGE_HEADER_STORY,
-    WD_FIRST_PAGE_FOOTER_STORY,
     WD_FIND_CONTINUE,
     WD_REPLACE_ALL,
 )
 from .logger import get_logger
 from .path_validation import validate_folder_path, is_path_within_base
 from .scheduler import get_english_day_name, get_english_month_name
-
 
 logger = get_logger(__name__)
 
@@ -82,7 +75,7 @@ class WordProcessor:
         self.word_app: Any = None
         self._initialized = False
         self._com_initialized = False
-        self._template_cache: dict[str, dict[str, str]] = {}
+        self._template_cache: dict[str, dict[str, list[str]]] = {}
 
     def initialize(self) -> None:
         """
@@ -179,7 +172,7 @@ class WordProcessor:
             self._template_cache.clear()
             logger.debug("Cleared all template caches")
 
-    def _build_template_cache(self, folder_path: str) -> dict[str, str]:
+    def _build_template_cache(self, folder_path: str) -> dict[str, list[str]]:
         """Build a normalized template cache for a folder.
 
         Scans *folder_path* for ``.docx`` files, filtering out Word lock
@@ -190,10 +183,13 @@ class WordProcessor:
 
         Returns:
             Dict mapping normalized (lower-cased, whitespace-collapsed) base
-            names to their full file paths.
+            names to every file path that normalizes to that name.  A name
+            with more than one path is a collision and is rejected at lookup
+            time rather than silently resolved to whichever file the
+            filesystem happened to list last.
         """
 
-        cache: dict[str, str] = {}
+        cache: dict[str, list[str]] = {}
         for entry in Path(folder_path).iterdir():
             name = entry.name
             # Skip Word temp lock files and hidden files
@@ -201,7 +197,9 @@ class WordProcessor:
                 continue
             if name.lower().endswith(DOCX_EXTENSION):
                 base_name = " ".join(entry.stem.lower().split())
-                cache[base_name] = str(entry)
+                cache.setdefault(base_name, []).append(str(entry))
+        for paths in cache.values():
+            paths.sort()
         return cache
 
     def _ensure_template_cache(
@@ -259,7 +257,16 @@ class WordProcessor:
                 return func(*args)
             except Exception as e:
                 error_str = str(e).lower()
-                transient_keywords = ("rejected", "call was rejected", "busy", "server")
+                # Specific transient COM markers only.  A bare "server" match
+                # would also catch permanent faults such as "The server threw
+                # an exception", costing retries * delay seconds per document.
+                transient_keywords = (
+                    "call was rejected",
+                    "rejected by callee",
+                    "server is busy",
+                    "message filter",
+                    "rpc_e_",
+                )
                 if any(kw in error_str for kw in transient_keywords):
                     if attempt < retries - 1:
                         logger.debug(
@@ -272,6 +279,29 @@ class WordProcessor:
 
         # Defensive: this path is only reachable if retries == 0, which is disallowed above.
         raise RuntimeError("COM call failed")
+
+    @staticmethod
+    def _resolve_unique(base_name: str, paths: list[str]) -> str:
+        """Return the single path for *base_name*, or reject the collision.
+
+        Args:
+            base_name: The normalized template name that was matched.
+            paths: Every file path that normalizes to *base_name*.
+
+        Returns:
+            The one matching file path.
+
+        Raises:
+            TemplateLookupError: If more than one file normalizes to the
+                same name, which would otherwise print an arbitrary file.
+        """
+        if len(paths) > 1:
+            names = ", ".join(sorted(Path(p).name for p in paths))
+            raise TemplateLookupError(
+                f"Multiple template files resolve to the same name "
+                f"'{base_name}': {names}. Rename templates to be unique."
+            )
+        return paths[0]
 
     def find_template_file(self, folder: str, template_name: str) -> Optional[str]:
         """
@@ -307,7 +337,9 @@ class WordProcessor:
 
             # 1. Try exact match
             if template_name_lower in cache:
-                target = cache[template_name_lower]
+                target = self._resolve_unique(
+                    template_name_lower, cache[template_name_lower]
+                )
                 logger.debug(f"Template exact match: '{template_name}' -> {target}")
                 return target
 
@@ -316,45 +348,33 @@ class WordProcessor:
             # but allows "Thursday" matching "Thursday Night" if it's the only match
             pattern = re.compile(rf"\b{re.escape(template_name_lower)}\b")
 
-            matches: list[str] = []
-            for base_name, full_path in cache.items():
+            matched_keys: list[str] = []
+            for base_name in cache:
                 if pattern.search(base_name):
                     # Special logic: if search term doesn't have "third" but filename does, skip
                     # This prevents "Thursday" matching "THIRD Thursday"
                     if "third" not in template_name_lower and "third" in base_name:
                         continue
-                    matches.append(full_path)
+                    matched_keys.append(base_name)
 
-            if len(matches) == 1:
-                logger.info(f"Found robust template match: {matches[0]}")
-                return matches[0]
-            elif len(matches) > 1:
-                # If multiple matches, try to find the one that starts with it (more specific)
-                exact = [
-                    m
-                    for m in matches
-                    if " ".join(Path(m).stem.lower().split()) == template_name_lower
-                ]
-                if len(exact) == 1:
-                    logger.info(
-                        f"Found exact-stem template match from multiple: {exact[0]}"
-                    )
-                    return exact[0]
-
-                starts = [
-                    m
-                    for m in matches
-                    if Path(m).stem.lower().startswith(template_name_lower)
-                ]
+            if len(matched_keys) == 1:
+                key = matched_keys[0]
+                target = self._resolve_unique(key, cache[key])
+                logger.info(f"Found robust template match: {target}")
+                return target
+            if len(matched_keys) > 1:
+                # An exact stem equals the cache key, so branch 1 already
+                # handled it.  Prefer the one remaining prefix match.
+                starts = [k for k in matched_keys if k.startswith(template_name_lower)]
                 if len(starts) == 1:
-                    logger.info(
-                        f"Found specific template match from multiple: {starts[0]}"
-                    )
-                    return starts[0]
+                    target = self._resolve_unique(starts[0], cache[starts[0]])
+                    logger.info(f"Found specific template match: {target}")
+                    return target
 
+                candidates = sorted(path for key in matched_keys for path in cache[key])
                 raise TemplateLookupError(
                     f"Ambiguous template matches for '{template_name}'. "
-                    f"Please rename templates to be unique. Matches: {matches}"
+                    f"Please rename templates to be unique. Matches: {candidates}"
                 )
 
             # Not found: refresh once in case templates were added during runtime.
@@ -379,7 +399,6 @@ class WordProcessor:
         template_name: str,
         current_date: date,
         printer_name: str,
-        headers_footers_only: bool = False,
     ) -> tuple[bool, Optional[str]]:
         """
         Open, update dates, and print a Word document.
@@ -389,7 +408,6 @@ class WordProcessor:
             template_name: The name of the template file
             current_date: The date to use for replacements
             printer_name: The printer to use
-            headers_footers_only: If True, only replace dates in headers/footers
 
         Returns:
             tuple of (success, error_message)
@@ -440,9 +458,7 @@ class WordProcessor:
                         )
 
             # Replace dates
-            self.replace_dates(
-                doc, current_date, headers_footers_only=headers_footers_only
-            )
+            self.replace_dates(doc, current_date)
 
             # Set printer and print
             if self.word_app:
@@ -476,31 +492,16 @@ class WordProcessor:
                 except Exception as e:
                     logger.warning(f"Error closing document: {e}")
 
-    def replace_dates(
-        self, doc: Any, current_date: date, headers_footers_only: bool = False
-    ) -> None:
+    def replace_dates(self, doc: Any, current_date: date) -> None:
         """
         Replace date placeholders in the document using regex patterns.
 
         Args:
             doc: The Word document object
             current_date: The date to use for replacements
-            headers_footers_only: If True, restrict replacements to
-                header/footer story ranges only.
         """
-        allowed_story_types: Optional[set[int]] = None
-        if headers_footers_only:
-            allowed_story_types = {
-                WD_PRIMARY_HEADER_STORY,
-                WD_EVEN_PAGES_HEADER_STORY,
-                WD_FIRST_PAGE_HEADER_STORY,
-                WD_PRIMARY_FOOTER_STORY,
-                WD_EVEN_PAGES_FOOTER_STORY,
-                WD_FIRST_PAGE_FOOTER_STORY,
-            }
-
         # Normalize non-breaking spaces before running patterns
-        self._normalize_spaces_in_doc(doc, allowed_story_types=allowed_story_types)
+        self._normalize_spaces_in_doc(doc)
 
         # Format date components using locale-independent English names.
         # strftime("%A") / strftime("%B") return locale-dependent strings
@@ -564,9 +565,7 @@ class WordProcessor:
 
         any_matched = False
         for find_text, replace_text in patterns:
-            if self._execute_replace(
-                doc, find_text, replace_text, allowed_story_types=allowed_story_types
-            ):
+            if self._execute_replace(doc, find_text, replace_text):
                 any_matched = True
 
         if not any_matched:
@@ -586,9 +585,7 @@ class WordProcessor:
 
         logger.debug(f"Date replacements completed for {current_date}")
 
-    def _normalize_spaces_in_doc(
-        self, doc: Any, allowed_story_types: Optional[set[int]] = None
-    ) -> None:
+    def _normalize_spaces_in_doc(self, doc: Any) -> None:
         """Normalize invisible characters that break wildcard matching.
 
         Word templates frequently contain non-breaking spaces (U+00A0),
@@ -600,8 +597,6 @@ class WordProcessor:
 
         Args:
             doc: The Word document object.
-            allowed_story_types: Optional set of Word StoryType constants to
-                restrict the scope of replacement.
         """
         # Each tuple is (FindText, ReplaceWith, description).
         # ^s   = non-breaking space (U+00A0) — replace with regular space
@@ -627,9 +622,7 @@ class WordProcessor:
 
         for find_code, replace_with, desc in normalizations:
             try:
-                for story in self._iter_story_ranges(
-                    doc, allowed_story_types=allowed_story_types
-                ):
+                for story in self._iter_story_ranges(doc):
                     f = story.Find
                     f.ClearFormatting()
                     f.Replacement.ClearFormatting()
@@ -640,7 +633,7 @@ class WordProcessor:
                         False,  # MatchWildcards (must be False for ^codes)
                         False,  # MatchSoundsLike
                         False,  # MatchAllWordForms
-                        True,   # Forward
+                        True,  # Forward
                         WD_FIND_CONTINUE,  # Wrap
                         False,  # Format
                         replace_with,
@@ -654,7 +647,6 @@ class WordProcessor:
         doc: Any,
         find_text: str,
         replace_text: str,
-        allowed_story_types: Optional[set[int]] = None,
     ) -> bool:
         """
         Execute a find and replace operation across all story ranges.
@@ -663,32 +655,24 @@ class WordProcessor:
             doc: The Word document object
             find_text: The text pattern to find
             replace_text: The replacement text
-            allowed_story_types: Optional set of Word StoryType constants to
-                restrict which story ranges are searched.
 
         Returns:
             True if at least one replacement was made
         """
         any_replaced = False
         try:
-            for story in self._iter_story_ranges(
-                doc, allowed_story_types=allowed_story_types
-            ):
+            for story in self._iter_story_ranges(doc):
                 if self._run_find_replace(story, find_text, replace_text):
                     any_replaced = True
         except Exception as e:
             logger.warning(f"Error during find/replace: {e}")
         return any_replaced
 
-    def _iter_story_ranges(
-        self, doc: Any, allowed_story_types: Optional[set[int]] = None
-    ) -> Iterator[Any]:
-        """Iterate all story ranges, optionally filtering by StoryType.
+    def _iter_story_ranges(self, doc: Any) -> Iterator[Any]:
+        """Iterate all story ranges in a document.
 
         Args:
             doc: The Word document object.
-            allowed_story_types: If provided, only yield ranges whose
-                ``StoryType`` is in this set.
 
         Yields:
             Word Range objects from the document's StoryRanges collection.
@@ -699,9 +683,7 @@ class WordProcessor:
                 # Include this story and its linked NextStoryRange chain
                 cur = story
                 while cur:
-                    stype = getattr(cur, "StoryType", None)
-                    if allowed_story_types is None or stype in allowed_story_types:
-                        yield cur
+                    yield cur
                     cur = getattr(cur, "NextStoryRange", None)
         except Exception as e:
             logger.warning(f"Error iterating story ranges: {e}")

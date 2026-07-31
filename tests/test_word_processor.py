@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 from pathlib import Path
 from datetime import date
 
-from src.word_processor import WordProcessor
+from src.word_processor import WordProcessor, TemplateLookupError
 
 
 class TestWordProcessor:
@@ -82,6 +82,50 @@ class TestWordProcessor:
         assert result is not None
         assert result.endswith("Thursday.docx")
 
+    def test_permanent_server_error_is_not_retried(self, wp):
+        """A permanent COM fault must fail fast instead of burning retries."""
+        call = MagicMock(side_effect=Exception("The server threw an exception"))
+
+        with pytest.raises(Exception, match="threw an exception"):
+            wp.safe_com_call(call, retries=3, delay=0)
+
+        assert call.call_count == 1
+
+    def test_busy_server_error_is_retried(self, wp):
+        """A genuinely transient COM fault must still be retried."""
+        call = MagicMock(
+            side_effect=[Exception("Server is busy"), Exception("Server is busy"), "ok"]
+        )
+
+        assert wp.safe_com_call(call, retries=3, delay=0) == "ok"
+        assert call.call_count == 3
+
+    def test_colliding_normalized_names_raise(self, wp, tmp_path):
+        """Two files that normalize to the same name must not silently shadow."""
+        (tmp_path / "Thursday Night.docx").write_text("dummy")
+        (tmp_path / "Thursday  Night.docx").write_text("dummy")
+
+        with pytest.raises(TemplateLookupError) as exc:
+            wp.find_template_file(str(tmp_path), "Thursday Night")
+
+        message = str(exc.value)
+        assert "Thursday Night.docx" in message
+        assert "Thursday  Night.docx" in message
+
+    def test_collision_check_does_not_break_normal_lookup(self, wp, tmp_path):
+        """A folder without collisions must resolve exactly as before."""
+        (tmp_path / "Monday.docx").write_text("dummy")
+        (tmp_path / "Thursday Night.docx").write_text("dummy")
+        (tmp_path / "THIRD Thursday.docx").write_text("dummy")
+
+        assert wp.find_template_file(str(tmp_path), "Monday").endswith("Monday.docx")
+        assert wp.find_template_file(str(tmp_path), "Thursday").endswith(
+            "Thursday Night.docx"
+        )
+        assert wp.find_template_file(str(tmp_path), "THIRD Thursday").endswith(
+            "THIRD Thursday.docx"
+        )
+
     def test_replace_dates_logic(self, wp):
         """Should call find/replace with correct patterns."""
         mock_doc = MagicMock()
@@ -102,26 +146,6 @@ class TestWordProcessor:
             calls = [c[0][2] for c in mock_exec.call_args_list]
             assert "Thursday, January 15, 2026" in calls
 
-    def test_replace_dates_headers_only_passes_filter(self, wp):
-        """headers_footers_only should pass a story-type filter through."""
-
-        mock_doc = MagicMock()
-        current_date = date(2026, 1, 15)
-
-        with patch.object(wp, "_normalize_spaces_in_doc") as mock_norm, patch.object(
-            wp, "_execute_replace", return_value=False
-        ) as mock_exec:
-            wp.replace_dates(mock_doc, current_date, headers_footers_only=True)
-
-        assert mock_norm.call_count == 1
-        # allowed_story_types is passed as kwarg
-        assert "allowed_story_types" in mock_norm.call_args.kwargs
-        assert mock_norm.call_args.kwargs["allowed_story_types"] is not None
-
-        assert mock_exec.call_count == 6
-        assert "allowed_story_types" in mock_exec.call_args.kwargs
-        assert mock_exec.call_args.kwargs["allowed_story_types"] is not None
-
     @patch("src.word_processor.pythoncom.CoInitialize")
     @patch("src.word_processor.win32_client.Dispatch")
     def test_initialize_success(self, mock_dispatch, mock_coinit):
@@ -135,12 +159,12 @@ class TestWordProcessor:
         mock_dispatch.assert_called_with("Word.Application")
 
     def test_safe_com_call_retry(self, wp):
-        """Safe COM call should retry on rejection."""
+        """Safe COM call should retry on genuinely transient COM faults."""
         mock_func = MagicMock()
-        # Fail twice with "rejected", then succeed
+        # Fail twice with real transient COM messages, then succeed
         mock_func.side_effect = [
             Exception("Call was rejected by callee"),
-            Exception("Rejected"),
+            Exception("The message filter indicated that the application is busy"),
             "Success",
         ]
 
@@ -313,7 +337,7 @@ class TestWordProcessor:
 
         # Manually place a malicious path in the cache
         folder_path = str(tmp_path.resolve())
-        wp._template_cache[folder_path] = {"thursday": "/etc/passwd"}
+        wp._template_cache[folder_path] = {"thursday": ["/etc/passwd"]}
 
         success, error = wp.print_document(
             str(tmp_path), "Thursday", date(2026, 1, 15), "Printer"
@@ -465,6 +489,7 @@ class TestWordProcessor:
         wp.word_app.Documents.Open.return_value = mock_doc
 
         call_log = []
+
         def tracking_safe_com_call(f, *a, **kw):
             call_log.append((f, a, kw))
             return f(*a)

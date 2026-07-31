@@ -3,28 +3,31 @@ name: Build
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version (e.g. 2.0.0)"
-        required: true
-        default: "2.0.0"
       create_release:
         description: "Create a GitHub Release"
         type: boolean
         default: false
+  push:
+    branches:
+      - main
+      - test
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: windows-latest
+  quality:
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -33,13 +36,43 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
+      - name: Check formatting
+        run: black --check src tests
+
+      - name: Type check
+        run: mypy src --ignore-missing-imports
+
       - name: Lint
-        run: |
-          black --check src tests
-          mypy src --ignore-missing-imports
+        run: pylint src --fail-under=8.0
 
       - name: Test
         run: pytest --cov=src --cov-report=term-missing
+
+  build:
+    needs: quality
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          v=$(python -c "import re, pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('src/__init__.py').read_text()).group(1))")
+          echo "value=$v" >> "$GITHUB_OUTPUT"
 
       - name: Build exe
         run: >
@@ -49,21 +82,21 @@ jobs:
           --icon=icon.ico
           --add-data "icon.ico;."
           --add-data "icon.png;."
-          --name "Shift Automator Pro"
+          --name "ShiftPress"
           main.py
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: ShiftAutomatorPro-v${{ inputs.version }}
+          name: ShiftPress-v${{ steps.version.outputs.value }}
           path: dist/*.exe
           retention-days: 90
 
       - name: Create Release
         if: inputs.create_release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
-          tag_name: v${{ inputs.version }}
-          name: v${{ inputs.version }}
+          tag_name: v${{ steps.version.outputs.value }}
+          name: v${{ steps.version.outputs.value }}
           generate_release_notes: true
           files: dist/*.exe

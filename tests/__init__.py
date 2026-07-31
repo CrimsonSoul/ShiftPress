@@ -1,3 +1,3 @@
 """
-Tests for Shift Automator application.
+Tests for ShiftPress application.
 """

@@ -1,5 +1,5 @@
 """
-Shift Automator - A high-performance desktop application for automating shift schedule printing.
+ShiftPress - Batch print shift schedules via Word COM automation.
 
 This package provides modules for:
 - Configuration management (config)
@@ -12,10 +12,10 @@ This package provides modules for:
 - Per-user data paths (app_paths)
 """
 
-__version__ = "2.0.0"
-__author__ = "Shift Automator Team"
+__version__ = "2.1.0"
+__author__ = "ShiftPress"
 
-__all__ = ["ShiftAutomatorApp", "main"]
+__all__ = ["ShiftPressApp", "main"]
 
 
 def __getattr__(name: str) -> object:
@@ -25,16 +25,16 @@ def __getattr__(name: str) -> object:
         name: The attribute name being looked up.
 
     Returns:
-        The requested module-level symbol (``ShiftAutomatorApp`` or ``main``).
+        The requested module-level symbol (``ShiftPressApp`` or ``main``).
 
     Raises:
         AttributeError: If *name* is not a public symbol of this package.
     """
 
-    if name in ("ShiftAutomatorApp", "main"):
-        from .main import ShiftAutomatorApp, main  # noqa: F811
+    if name in ("ShiftPressApp", "main"):
+        from .main import ShiftPressApp, main  # noqa: F811
 
-        globals()["ShiftAutomatorApp"] = ShiftAutomatorApp
+        globals()["ShiftPressApp"] = ShiftPressApp
         globals()["main"] = main
         return globals()[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
