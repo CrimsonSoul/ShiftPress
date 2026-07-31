@@ -85,7 +85,7 @@ DOCX_EXTENSION: Final = ".docx"
 
 # Configuration
 CONFIG_FILENAME: Final = "config.json"
-LOG_FILENAME: Final = "shiftpress.log"
+LOG_FILENAME: Final = "shiftprint.log"
 
 # UI Constants
 WINDOW_WIDTH: Final = 1040

@@ -49,7 +49,7 @@ class TestSetupLogging:
         setup_logging(log_dir=str(tmp_path))
         log_files = list(tmp_path.glob("*.log"))
         assert len(log_files) == 1
-        assert log_files[0].name == "shiftpress.log"
+        assert log_files[0].name == "shiftprint.log"
 
     def test_custom_log_filename(self, tmp_path):
         """Should use a custom log filename when specified."""
