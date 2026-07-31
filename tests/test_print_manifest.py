@@ -189,3 +189,44 @@ def test_rejects_missing_range_end() -> None:
 
     with pytest.raises(ValueError, match="Night range end"):
         build_print_manifest((selection,))
+
+
+def test_validate_accepts_a_valid_single_date() -> None:
+    """A well-formed single-date selection has no error."""
+    assert _selection("night").validate() is None
+
+
+def test_validate_ignores_a_disabled_selection() -> None:
+    """A shift that is not included cannot be invalid."""
+    selection = _selection(
+        "day",
+        enabled=False,
+        mode="range",
+        start_date=date(2026, 8, 10),
+        end_date=date(2026, 8, 1),
+    )
+
+    assert selection.validate() is None
+
+
+def test_validate_labels_a_reversed_range_with_its_shift() -> None:
+    """A reversed range must name the shift it belongs to."""
+    selection = _selection(
+        "night",
+        mode="range",
+        start_date=date(2026, 8, 10),
+        end_date=date(2026, 8, 1),
+    )
+
+    error = selection.validate()
+
+    assert error is not None
+    assert error.startswith("Night schedule:")
+    assert "End date cannot be before start date" in error
+
+
+def test_validate_labels_a_missing_date_with_its_shift() -> None:
+    """A missing date must name the shift it belongs to."""
+    selection = _selection("day", start_date=None, end_date=None)
+
+    assert selection.validate() == "Select a Day date"

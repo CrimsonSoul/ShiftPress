@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Literal, Optional, Sequence
 
-from .scheduler import get_date_range, get_shift_template_name
+from .scheduler import get_date_range, get_shift_template_name, validate_date_range
 
 ShiftType = Literal["night", "day"]
 DateMode = Literal["single", "range"]
@@ -41,6 +41,28 @@ class ShiftSelection:
         if self.end_date is None:
             raise ValueError(f"Select a {label} range end date")
         return self.start_date, self.end_date
+
+    def validate(self) -> Optional[str]:
+        """Return a shift-labelled error for this selection, or None if valid.
+
+        A disabled selection is always valid: an excluded shift contributes
+        no jobs, so its date values cannot block a run.
+
+        Returns:
+            ``None`` when this selection can contribute jobs, otherwise a
+            human-readable message naming the shift at fault.
+        """
+        if not self.enabled:
+            return None
+        label = self.shift_type.title()
+        try:
+            start_date, end_date = self.active_range()
+        except ValueError as e:
+            return str(e)
+        is_valid, error_msg = validate_date_range(start_date, end_date)
+        if not is_valid:
+            return f"{label} schedule: {error_msg}"
+        return None
 
 
 @dataclass(frozen=True)
