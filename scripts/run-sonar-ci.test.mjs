@@ -46,11 +46,8 @@ test('runs the clean pull-request phases in exact order with a bounded upload', 
   ]);
   assert.equal(command.timeoutMs, 600_000);
   assert.equal(command.maxOutputBytes, 32_768);
-  assert.match(command.file, /npm(?:\.cmd)?$/u);
+  assert.match(command.file, /sonar-scanner-npm(?:\.cmd)?$/u);
   assert.deepEqual(command.args, [
-    'run',
-    'security:sonar',
-    '--',
     '-Dsonar.organization=crimsonsoul',
     '-Dsonar.qualitygate.wait=false',
     '-Dsonar.host.url=https://sonarcloud.io',

@@ -81,11 +81,8 @@ function scopeArgument(scope) {
 
 function scannerCommand(env, timeoutMs) {
   return {
-    file: process.platform === 'win32' ? 'npm.cmd' : 'npm',
+    file: process.platform === 'win32' ? 'sonar-scanner-npm.cmd' : 'sonar-scanner-npm',
     args: [
-      'run',
-      'security:sonar',
-      '--',
       `-Dsonar.organization=${env.SONAR_ORGANIZATION}`,
       '-Dsonar.qualitygate.wait=false',
       ...(nonEmptyString(env.SONAR_HOST_URL) ? [`-Dsonar.host.url=${env.SONAR_HOST_URL}`] : []),

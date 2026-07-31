@@ -51,74 +51,18 @@ function page(issues, { pageIndex = 1, total = issues.length } = {}) {
   };
 }
 
-test('pins the exact reviewed inventory and intended dispositions', () => {
+test('starts ShiftPrint with an exact empty reviewed inventory', () => {
   assert.equal(validateReviewedIssueManifest(), REVIEWED_ISSUES);
-  assert.equal(REVIEWED_ISSUES.length, 49);
-  assert.equal(new Set(REVIEWED_ISSUES.map((issue) => issue.key)).size, 49);
-  assert.equal(REVIEWED_ISSUES.filter((issue) => issue.transition === 'accept').length, 43);
-  assert.equal(REVIEWED_ISSUES.filter((issue) => issue.transition === 'falsepositive').length, 6);
-
-  const falsePositiveRules = REVIEWED_ISSUES.filter((issue) => issue.transition === 'falsepositive')
-    .map((issue) => issue.rule)
-    .sort();
-  assert.deepEqual(falsePositiveRules, [
-    'css:S7924',
-    'css:S7924',
-    'css:S7924',
-    'tssecurity:S5144',
-    'typescript:S7758',
-    'typescript:S7758',
-  ]);
-  assert.deepEqual(
-    REVIEWED_ISSUES.filter((issue) => issue.rule === 'typescript:S8980').map((issue) => issue.key),
-    ['AZ-alMl2TAUVQ8sYgoiA'],
-  );
-  assert.deepEqual(
-    REVIEWED_ISSUES.filter((issue) => issue.rule === 'tssecurity:S5144').map(
-      ({ key, transition }) => ({ key, transition }),
-    ),
-    [{ key: 'AZ-gb17s7Nsapz3kouHt', transition: 'falsepositive' }],
-  );
-  assert.deepEqual(
-    REVIEWED_ISSUES.filter((issue) => issue.rule === 'typescript:S7785').map(
-      ({ key, transition }) => ({ key, transition }),
-    ),
-    [{ key: 'AZ-gb19K7Nsapz3kouHu', transition: 'accept' }],
-  );
-  assert.deepEqual(
-    REVIEWED_ISSUES.filter((issue) => ['Web:S6819', 'typescript:S6478'].includes(issue.rule)).map(
-      ({ key, transition }) => ({ key, transition }),
-    ),
-    [
-      { key: 'AZ-alMTTTAUVQ8sYgog2', transition: 'accept' },
-      { key: 'AZ-alM5ATAUVQ8sYgoiw', transition: 'accept' },
-    ],
-  );
-  assert.deepEqual(
-    REVIEWED_ISSUES.filter((issue) => issue.key === 'AZytnJJ1sZaVqOVfTofc').map(
-      ({ rule, transition }) => ({ rule, transition }),
-    ),
-    [{ rule: 'typescript:S6819', transition: 'accept' }],
-  );
+  assert.deepEqual(REVIEWED_ISSUES, []);
+  assert.equal(Object.isFrozen(REVIEWED_ISSUES), true);
 });
 
-test('rejects malformed reviewed manifests', () => {
-  assert.throws(() => validateReviewedIssueManifest(REVIEWED_ISSUES.slice(1)), /exactly 49/i);
+test('rejects any inherited or unreviewed exception metadata', () => {
   assert.throws(
-    () => validateReviewedIssueManifest([...REVIEWED_ISSUES.slice(0, -1), REVIEWED_ISSUES[0]]),
-    /repeats key/i,
+    () => validateReviewedIssueManifest([{ key: 'relay-exception' }]),
+    /exactly 0 issues/i,
   );
-  assert.throws(
-    () =>
-      validateReviewedIssueManifest([
-        ...REVIEWED_ISSUES.slice(0, -1),
-        {
-          ...REVIEWED_ISSUES.at(-1),
-          transition: 'wontfix',
-        },
-      ]),
-    /invalid metadata/i,
-  );
+  assert.throws(() => validateReviewedIssueManifest(null), /exactly 0 issues/i);
 });
 
 test('reads one exact project key and requires an explicit apply latch on branch test', () => {
@@ -236,40 +180,11 @@ test('rejects insecure or credential-bearing hosts before sending the token', as
   }
 });
 
-test('preflights all metadata before applying exact sorted transitions', async () => {
-  const acceptOpen = REVIEWED_ISSUES.find((issue) => issue.transition === 'accept');
-  const acceptReviewed = REVIEWED_ISSUES.find(
-    (issue) => issue.transition === 'accept' && issue.key !== acceptOpen.key,
-  );
-  const falsePositiveOpen = REVIEWED_ISSUES.find((issue) => issue.transition === 'falsepositive');
-  const falsePositiveReviewed = REVIEWED_ISSUES.find(
-    (issue) => issue.transition === 'falsepositive' && issue.key !== falsePositiveOpen.key,
-  );
-  const current = [
-    issueFromManifest(falsePositiveReviewed, 'RESOLVED', {
-      resolution: 'FALSE-POSITIVE',
-      issueStatus: 'FALSE_POSITIVE',
-    }),
-    issueFromManifest(acceptOpen, 'OPEN'),
-    issueFromManifest(acceptReviewed, 'RESOLVED', {
-      resolution: 'WONTFIX',
-      issueStatus: 'ACCEPTED',
-    }),
-    issueFromManifest(falsePositiveOpen, 'CONFIRMED'),
-    {
-      key: 'historical-reviewed-issue',
-      rule: 'typescript:S0001',
-      component: `${PROJECT_KEY}:src/historical.ts`,
-      status: 'RESOLVED',
-      resolution: 'WONTFIX',
-      issueStatus: 'ACCEPTED',
-    },
-  ];
+test('reconciles the empty inventory without mutating Sonar', async () => {
   const requests = [];
   const fetcher = async (url, options = {}) => {
     requests.push({ url: new URL(url), options });
-    if (!options.method) return response(page(current));
-    return response({});
+    return response(page([]));
   };
 
   const result = await reconcileReviewedSonarIssues({
@@ -279,55 +194,17 @@ test('preflights all metadata before applying exact sorted transitions', async (
     token: TOKEN,
   });
 
-  const expectedTransitions = [
-    { key: acceptOpen.key, transition: 'accept' },
-    { key: falsePositiveOpen.key, transition: 'falsepositive' },
-  ].sort((left, right) => left.key.localeCompare(right.key, 'en'));
-  assert.deepEqual(
-    result.transitions.map(({ key, transition }) => ({ key, transition })),
-    expectedTransitions,
-  );
-  assert.deepEqual(
-    result.transitioned,
-    expectedTransitions.map((item) => item.key),
-  );
-  assert.deepEqual(
-    result.alreadyReviewed,
-    [acceptReviewed.key, falsePositiveReviewed.key].sort((left, right) =>
-      left.localeCompare(right, 'en'),
-    ),
-  );
-  assert.equal(result.fixedOrMissing.length, 45);
-  assert.deepEqual(result.ignoredReviewed, ['historical-reviewed-issue']);
-
-  assert.equal(requests.length, 3);
-  for (const [index, item] of expectedTransitions.entries()) {
-    const request = requests[index + 1];
-    assert.equal(request.url.pathname, '/api/issues/do_transition');
-    assert.equal(request.url.search, '');
-    assert.equal(request.options.method, 'POST');
-    assert.equal(request.options.headers.Authorization, `Bearer ${TOKEN}`);
-    assert.equal(request.options.headers['Content-Type'], 'application/x-www-form-urlencoded');
-    assert.equal(request.options.body.get('issue'), item.key);
-    assert.equal(request.options.body.get('transition'), item.transition);
-    assert.match(request.options.body.get('comment'), /^ShiftPrint reviewed exception:/);
-    if (item.transition === 'falsepositive') {
-      assert.match(request.options.body.get('comment'), /(compatibility|contrast|openExternal)/i);
-    } else {
-      assert.match(
-        request.options.body.get('comment'),
-        /(ARIA|test|Electron|ErrorBoundary|live-region)/i,
-      );
-    }
-  }
+  assert.deepEqual(result.transitions, []);
+  assert.deepEqual(result.transitioned, []);
+  assert.deepEqual(result.alreadyReviewed, []);
+  assert.deepEqual(result.fixedOrMissing, []);
+  assert.deepEqual(result.ignoredReviewed, []);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].options.method, undefined);
 });
 
-test('skips fixed or missing and already-reviewed allowlisted issues', () => {
-  const accepted = REVIEWED_ISSUES.find((issue) => issue.transition === 'accept');
-  const falsePositive = REVIEWED_ISSUES.find((issue) => issue.transition === 'falsepositive');
+test('ignores historical reviewed issues without inheriting them as exceptions', () => {
   const result = planReviewedIssueReconciliation([
-    issueFromManifest(accepted, 'ACCEPTED'),
-    issueFromManifest(falsePositive, 'FALSE_POSITIVE'),
     {
       key: 'historical-reviewed-issue',
       rule: 'typescript:S0001',
@@ -337,36 +214,9 @@ test('skips fixed or missing and already-reviewed allowlisted issues', () => {
   ]);
 
   assert.deepEqual(result.transitions, []);
-  assert.deepEqual(
-    result.alreadyReviewed,
-    [accepted.key, falsePositive.key].sort((left, right) => left.localeCompare(right, 'en')),
-  );
+  assert.deepEqual(result.alreadyReviewed, []);
   assert.deepEqual(result.ignoredReviewed, ['historical-reviewed-issue']);
-  assert.equal(result.fixedOrMissing.length, 47);
-});
-
-test('fails closed before mutation on rule or component drift', async () => {
-  const expected = REVIEWED_ISSUES[0];
-  for (const overrides of [
-    { rule: 'typescript:S9999' },
-    { component: `${PROJECT_KEY}:src/different.ts` },
-  ]) {
-    let requestCount = 0;
-    await assert.rejects(
-      reconcileReviewedSonarIssues({
-        fetcher: async (_url, options = {}) => {
-          requestCount += 1;
-          assert.equal(options.method, undefined);
-          return response(page([issueFromManifest(expected, 'OPEN', overrides)]));
-        },
-        hostUrl: HOST_URL,
-        projectKey: PROJECT_KEY,
-        token: TOKEN,
-      }),
-      /no longer matches its expected (rule|component)/i,
-    );
-    assert.equal(requestCount, 1);
-  }
+  assert.deepEqual(result.fixedOrMissing, []);
 });
 
 test('fails closed before mutation when an unreviewed open issue appears', async () => {
@@ -378,11 +228,10 @@ test('fails closed before mutation when an unreviewed open issue appears', async
         assert.equal(options.method, undefined);
         return response(
           page([
-            issueFromManifest(REVIEWED_ISSUES[0], 'OPEN'),
             {
               key: 'new-unreviewed-issue',
-              rule: 'typescript:S9999',
-              component: `${PROJECT_KEY}:src/new-behavior.ts`,
+              rule: 'python:S9999',
+              component: `${PROJECT_KEY}:src/new_behavior.py`,
               status: 'OPEN',
             },
           ]),
@@ -400,25 +249,16 @@ test('fails closed before mutation when an unreviewed open issue appears', async
   assert.equal(requestCount, 1);
 });
 
-test('rejects an allowlisted issue reviewed with the wrong disposition', () => {
-  const accepted = REVIEWED_ISSUES.find((issue) => issue.transition === 'accept');
-  const falsePositive = REVIEWED_ISSUES.find((issue) => issue.transition === 'falsepositive');
-  assert.throws(
-    () => planReviewedIssueReconciliation([issueFromManifest(accepted, 'FALSE_POSITIVE')]),
-    /unexpected reviewed status/i,
-  );
-  assert.throws(
-    () => planReviewedIssueReconciliation([issueFromManifest(falsePositive, 'ACCEPTED')]),
-    /unexpected reviewed status/i,
-  );
-});
-
 test('fails closed when canonical and legacy Sonar issue states conflict', () => {
-  const expected = REVIEWED_ISSUES[0];
+  const issue = {
+    key: 'historical-reviewed-issue',
+    rule: 'python:S0001',
+    component: `${PROJECT_KEY}:src/historical.py`,
+  };
   assert.throws(
     () =>
       planReviewedIssueReconciliation([
-        issueFromManifest(expected, 'RESOLVED', {
+        issueFromManifest(issue, 'RESOLVED', {
           resolution: 'WONTFIX',
           issueStatus: 'FALSE_POSITIVE',
         }),
@@ -428,7 +268,7 @@ test('fails closed when canonical and legacy Sonar issue states conflict', () =>
   assert.throws(
     () =>
       planReviewedIssueReconciliation([
-        issueFromManifest(expected, 'RESOLVED', {
+        issueFromManifest(issue, 'RESOLVED', {
           resolution: 'REMOVED',
         }),
       ]),
@@ -459,10 +299,15 @@ test('fails on search API, JSON, duplicate, and pagination errors', async () => 
   await assert.rejects(
     fetchCurrentSonarIssues({
       ...options,
-      fetcher: async () =>
-        response(
-          page([issueFromManifest(REVIEWED_ISSUES[0]), issueFromManifest(REVIEWED_ISSUES[0])]),
-        ),
+      fetcher: async () => {
+        const duplicate = {
+          key: 'duplicate-issue',
+          rule: 'python:S0001',
+          component: `${PROJECT_KEY}:src/duplicate.py`,
+          status: 'OPEN',
+        };
+        return response(page([duplicate, duplicate]));
+      },
     }),
     /duplicate issue key/i,
   );
@@ -527,7 +372,7 @@ test('types reviewed-issue service availability separately from authentication',
   );
 });
 
-test('bounds reviewed-issue searches and transitions with abort signals', async () => {
+test('bounds reviewed-issue searches with abort signals', async () => {
   let searchSignal = false;
   await assert.rejects(
     fetchCurrentSonarIssues({
@@ -539,93 +384,21 @@ test('bounds reviewed-issue searches and transitions with abort signals', async 
         searchSignal = options.signal instanceof AbortSignal;
         if (!searchSignal) throw new Error('missing search abort signal');
         return new Promise((_resolve, reject) => {
-          options.signal.addEventListener('abort', () => reject(options.signal.reason), {
-            once: true,
-          });
+          const watchdog = setTimeout(() => reject(new Error('abort signal did not fire')), 1_000);
+          options.signal.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(watchdog);
+              reject(options.signal.reason);
+            },
+            { once: true },
+          );
         });
       },
     }),
     (error) => error instanceof ScannerGateError && error.outcome === SCANNER_OUTCOME.UNAVAILABLE,
   );
   assert.equal(searchSignal, true);
-
-  let transitionSignal = false;
-  await assert.rejects(
-    reconcileReviewedSonarIssues({
-      hostUrl: HOST_URL,
-      projectKey: PROJECT_KEY,
-      token: TOKEN,
-      requestTimeoutMs: 10,
-      fetcher: async (_url, options = {}) => {
-        if (!options.method) {
-          return response(page([issueFromManifest(REVIEWED_ISSUES[0], 'OPEN')]));
-        }
-        transitionSignal = options.signal instanceof AbortSignal;
-        if (!transitionSignal) throw new Error('missing transition abort signal');
-        return new Promise((_resolve, reject) => {
-          options.signal.addEventListener('abort', () => reject(options.signal.reason), {
-            once: true,
-          });
-        });
-      },
-    }),
-    (error) => error instanceof ScannerGateError && error.outcome === SCANNER_OUTCOME.UNAVAILABLE,
-  );
-  assert.equal(transitionSignal, true);
-});
-
-test('uses one aggregate deadline across reviewed-issue search and transitions', async () => {
-  let clock = 0;
-  let transitions = 0;
-  await assert.rejects(
-    reconcileReviewedSonarIssues({
-      hostUrl: HOST_URL,
-      projectKey: PROJECT_KEY,
-      token: TOKEN,
-      timeoutMs: 80,
-      now: () => clock,
-      fetcher: async (_url, options = {}) => {
-        clock += 40;
-        if (!options.method) {
-          return response(
-            page(REVIEWED_ISSUES.slice(0, 2).map((issue) => issueFromManifest(issue, 'OPEN'))),
-          );
-        }
-        transitions += 1;
-        return response({});
-      },
-    }),
-    (error) => error instanceof ScannerGateError && error.outcome === SCANNER_OUTCOME.UNAVAILABLE,
-  );
-  assert.equal(transitions, 1);
-});
-
-test('transition failures are deterministic, resumable, and token-safe', async () => {
-  const openIssues = REVIEWED_ISSUES.slice(0, 2).map((issue) => issueFromManifest(issue, 'OPEN'));
-  const sortedKeys = openIssues
-    .map((issue) => issue.key)
-    .sort((left, right) => left.localeCompare(right, 'en'));
-  const transitioned = [];
-  await assert.rejects(
-    reconcileReviewedSonarIssues({
-      fetcher: async (_url, options = {}) => {
-        if (!options.method) return response(page(openIssues));
-        const key = options.body.get('issue');
-        if (key === sortedKeys[1]) throw new Error(`hostile failure containing ${TOKEN}`);
-        transitioned.push(key);
-        return response({});
-      },
-      hostUrl: HOST_URL,
-      projectKey: PROJECT_KEY,
-      token: TOKEN,
-    }),
-    (error) => {
-      assert.match(error.message, new RegExp(sortedKeys[1]));
-      assert.equal(error.message.includes(TOKEN), false);
-      return true;
-    },
-  );
-  assert.deepEqual(transitioned, [sortedKeys[0]]);
 });
 
 test('formats deterministic summaries and redacts hostile token text', () => {
@@ -678,19 +451,13 @@ test('requires environment authentication and never emits the token sentinel', a
 });
 
 test('the Sonar CI runner reconciles reviewed issues only on test-branch pushes', async () => {
-  const [workflow, packageText, runner] = await Promise.all([
+  const [workflow, runner] = await Promise.all([
     readFile(new URL('../.github/workflows/security.yml', import.meta.url), 'utf8'),
-    readFile(new URL('../package.json', import.meta.url), 'utf8'),
     readFile(new URL('./run-sonar-ci.mjs', import.meta.url), 'utf8'),
   ]);
-  const packageJson = JSON.parse(packageText);
-  assert.equal(
-    packageJson.scripts['security:sonar:reviewed'],
-    'node scripts/sonar-reviewed-issues.mjs',
-  );
 
   assert.doesNotMatch(workflow, /workflow_dispatch:/);
-  assert.match(workflow, /npm run security:sonar:ci --/u);
+  assert.match(workflow, /node scripts\/run-sonar-ci\.mjs "\$\{SONAR_SCOPE\[@\]\}"/u);
   const branchGuard = runner.indexOf("if ('branch' in scope)");
   const reconcileStep = runner.indexOf('await reconcile({');
   const openFindingGate = runner.indexOf('await waitForSettledIssues');

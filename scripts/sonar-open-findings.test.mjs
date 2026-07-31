@@ -148,7 +148,7 @@ test('the security workflow delegates HTTPS validation to the Sonar CI gate', as
     readFile(new URL('../.github/workflows/security.yml', import.meta.url), 'utf8'),
     readFile(new URL('./run-sonar-ci.mjs', import.meta.url), 'utf8'),
   ]);
-  assert.match(workflow, /npm run security:sonar:ci --/u);
+  assert.match(workflow, /node scripts\/run-sonar-ci\.mjs "\$\{SONAR_SCOPE\[@\]\}"/u);
   assert.match(runner, /SONAR_HOST_URL must be a credential-free HTTPS URL/u);
 });
 
@@ -358,9 +358,15 @@ test('bounds each Sonar issue-search request with an abort signal', async () => 
         receivedSignal = options.signal instanceof AbortSignal;
         if (!receivedSignal) throw new Error('missing abort signal');
         return new Promise((_resolve, reject) => {
-          options.signal.addEventListener('abort', () => reject(options.signal.reason), {
-            once: true,
-          });
+          const watchdog = setTimeout(() => reject(new Error('abort signal did not fire')), 1_000);
+          options.signal.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(watchdog);
+              reject(options.signal.reason);
+            },
+            { once: true },
+          );
         });
       },
     }),

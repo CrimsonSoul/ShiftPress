@@ -9,7 +9,7 @@ const configuredEnv = {
   SNYK_TOKEN: 'snyk-token-sentinel-never-print',
   GITHUB_EVENT_NAME: 'pull_request',
   GITHUB_REF: 'refs/pull/221/merge',
-  GITHUB_REPOSITORY: 'CrimsonSoul/ShiftPrint',
+  GITHUB_REPOSITORY: 'CrimsonSoul/ShiftPress',
   GITHUB_SERVER_URL: 'https://github.com',
   GITHUB_SHA: 'abc123',
 };
@@ -34,9 +34,9 @@ test('runs Open Source and Code with exact bounded repository arguments on pull 
     '--package-manager=pip',
     '--severity-threshold=high',
     '--org=crimsonsoul',
-    '--project-name=CrimsonSoul/ShiftPrint',
+    '--project-name=CrimsonSoul/ShiftPress',
     '--target-reference=test',
-    '--remote-repo-url=https://github.com/CrimsonSoul/ShiftPrint.git',
+    '--remote-repo-url=https://github.com/CrimsonSoul/ShiftPress.git',
   ]);
   assert.deepEqual(commands[1].args, [
     'code',
