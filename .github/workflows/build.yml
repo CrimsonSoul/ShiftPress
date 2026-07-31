@@ -16,12 +16,14 @@ on:
   pull_request:
     branches:
       - main
+      - test
 
 permissions:
   contents: write
 
 jobs:
   quality:
+    name: Build quality gate
     runs-on: ubuntu-latest
 
     steps:
@@ -35,6 +37,11 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
@@ -47,8 +54,11 @@ jobs:
       - name: Lint
         run: pylint src --fail-under=8.0
 
-      - name: Test
+      - name: Run Python tests
         run: pytest --cov=src --cov-report=term-missing
+
+      - name: Run scanner regression tests
+        run: node --test scripts/*.test.mjs
 
   # The Linux job runs against mocked Windows modules. This one runs the same
   # suite against the real pywin32 and tkcalendar, which is the only place
