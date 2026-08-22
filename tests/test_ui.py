@@ -511,11 +511,11 @@ class TestScheduleAppUI:
         dialog.lift.assert_called_once()
         dialog.focus_force.assert_called_once()
         dialog.withdraw.assert_called_once()
-        assert (
+        assert before == (
             ui.get_day_folder(),
             ui.get_night_folder(),
             ui.get_printer_name(),
-        ) == before
+        )
 
     def test_set_inputs_enabled_locks_and_restores_shift_controls(self, ui):
         """Processing lock state should cover every independent shift control."""

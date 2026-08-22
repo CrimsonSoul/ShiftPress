@@ -36,6 +36,8 @@ from .app_paths import get_data_dir
 
 logger = get_logger(__name__)
 
+_DISPLAY_DATE_FORMAT = "%m/%d/%Y"
+
 
 class FailedOperation(TypedDict):
     """Typed structure for tracking failed print operations.
@@ -134,7 +136,7 @@ class ShiftPrintApp:
             self.ui.refresh_setup_summary()
             logger.info("Configuration loaded successfully")
         except Exception as e:
-            logger.error(f"Error loading configuration: {e}")
+            logger.exception("Error loading configuration")
             self.ui.show_warning(
                 "Configuration Error", f"Could not load saved configuration: {e}"
             )
@@ -150,8 +152,8 @@ class ShiftPrintApp:
             try:
                 self.config_manager.save(config)
                 logger.info("Configuration saved successfully")
-            except Exception as e:
-                logger.error(f"Error saving configuration: {e}")
+            except Exception:
+                logger.exception("Error saving configuration")
 
     @staticmethod
     def _normalize_folder(folder: str) -> str:
@@ -181,35 +183,17 @@ class ShiftPrintApp:
             if selection_error:
                 return None, selection_error
 
-        printer_name = (self.ui.get_printer_name() or "").strip()
-        if not printer_name or printer_name == DEFAULT_PRINTER_LABEL:
-            return None, "Please select a target printer"
-
-        available_printers: list[str] = []
-        try:
-            available_printers = self.ui.get_available_printers()
-        except Exception as e:
-            logger.debug(f"Could not enumerate printers for validation: {e}")
-
-        if available_printers and printer_name not in available_printers:
-            return None, (
-                "Selected printer is not available. Click Refresh and select a valid printer."
-            )
+        printer_name, printer_error = self._validate_printer_selection()
+        if printer_error:
+            return None, printer_error
 
         ok, word_err = get_word_automation_status()
         if not ok:
             return None, word_err
 
-        for selection in enabled_selections:
-            label = selection.shift_type.title()
-            if not selection.folder:
-                return None, f"Please select a {label} Templates folder"
-
-        for selection in enabled_selections:
-            label = selection.shift_type.title()
-            is_valid, error_msg = validate_folder_path(selection.folder)
-            if not is_valid:
-                return None, f"Invalid {label} Templates folder: {error_msg}"
+        folder_error = self._validate_selection_folders(enabled_selections)
+        if folder_error:
+            return None, folder_error
 
         try:
             manifest = build_print_manifest(selections)
@@ -230,6 +214,41 @@ class ShiftPrintApp:
             ),
             None,
         )
+
+    def _validate_printer_selection(self) -> tuple[str, Optional[str]]:
+        """Return the selected printer and any operator-facing validation error."""
+        printer_name = (self.ui.get_printer_name() or "").strip()
+        if not printer_name or printer_name == DEFAULT_PRINTER_LABEL:
+            return printer_name, "Please select a target printer"
+
+        try:
+            available_printers = self.ui.get_available_printers()
+        except Exception as e:
+            logger.debug(f"Could not enumerate printers for validation: {e}")
+            available_printers = []
+
+        if available_printers and printer_name not in available_printers:
+            return printer_name, (
+                "Selected printer is not available. Click Refresh and select a valid printer."
+            )
+        return printer_name, None
+
+    @staticmethod
+    def _validate_selection_folders(
+        selections: tuple[ShiftSelection, ...],
+    ) -> Optional[str]:
+        """Return the first enabled shift-folder validation error, if any."""
+        for selection in selections:
+            label = selection.shift_type.title()
+            if not selection.folder:
+                return f"Please select a {label} Templates folder"
+
+        for selection in selections:
+            label = selection.shift_type.title()
+            is_valid, error_msg = validate_folder_path(selection.folder)
+            if not is_valid:
+                return f"Invalid {label} Templates folder: {error_msg}"
+        return None
 
     def _preflight_templates(
         self,
@@ -290,16 +309,7 @@ class ShiftPrintApp:
         If a batch is already in progress, sets the cancel flag and disables the
         button instead of starting a new batch.
         """
-        # Check if already processing (can be used as stop button)
-        if self._processing_thread and self._processing_thread.is_alive():
-            self._cancel_event.set()
-            current_progress = (
-                self.ui.progress_var.get() if self.ui.progress_var else 0.0
-            )
-            self.ui.update_status(
-                "Stopping after current document...", current_progress
-            )
-            self.ui.set_print_button_state("disabled")
+        if self._request_cancel():
             return
 
         # Validate inputs
@@ -308,36 +318,9 @@ class ShiftPrintApp:
             self.ui.show_warning("Validation Error", error_msg or "Unknown error")
             return
 
-        total_jobs = len(request.manifest)
-        if total_jobs >= LARGE_BATCH_THRESHOLD:
-            scope_lines: list[str] = []
-            for shift_type in ("night", "day"):
-                dates = sorted(
-                    {
-                        job.date
-                        for job in request.manifest
-                        if job.shift_type == shift_type
-                    }
-                )
-                if not dates:
-                    continue
-                if dates[0] == dates[-1]:
-                    scope = dates[0].strftime("%m/%d/%Y")
-                else:
-                    scope = (
-                        f"{dates[0].strftime('%m/%d/%Y')} – "
-                        f"{dates[-1].strftime('%m/%d/%Y')}"
-                    )
-                scope_lines.append(f"{shift_type.title()}: {scope}")
-            scopes = "\n".join(scope_lines)
-            ok = self.ui.ask_yes_no(
-                "Large Batch Confirm",
-                f"This will print {total_jobs} selected schedules.\n\n"
-                f"{scopes}\n\nContinue?",
-            )
-            if not ok:
-                self.ui.update_status("Cancelled by user", 0)
-                return
+        if not self._confirm_large_batch(request.manifest):
+            self.ui.update_status("Cancelled by user", 0)
+            return
 
         # Reset cancel flag
         self._cancel_event.clear()
@@ -354,17 +337,51 @@ class ShiftPrintApp:
         )
         self._processing_thread.start()
 
+    def _request_cancel(self) -> bool:
+        """Request cancellation when a batch is active and report whether handled."""
+        if not (self._processing_thread and self._processing_thread.is_alive()):
+            return False
+        self._cancel_event.set()
+        current_progress = self.ui.progress_var.get() if self.ui.progress_var else 0.0
+        self.ui.update_status("Stopping after current document...", current_progress)
+        self.ui.set_print_button_state("disabled")
+        return True
+
+    @staticmethod
+    def _format_manifest_scopes(manifest: tuple[PrintJob, ...]) -> str:
+        """Format Night and Day date scopes in their stable operator order."""
+        scope_lines: list[str] = []
+        for shift_type in ("night", "day"):
+            dates = sorted(
+                {job.date for job in manifest if job.shift_type == shift_type}
+            )
+            if not dates:
+                continue
+            if dates[0] == dates[-1]:
+                scope = dates[0].strftime(_DISPLAY_DATE_FORMAT)
+            else:
+                scope = (
+                    f"{dates[0].strftime(_DISPLAY_DATE_FORMAT)} – "
+                    f"{dates[-1].strftime(_DISPLAY_DATE_FORMAT)}"
+                )
+            scope_lines.append(f"{shift_type.title()}: {scope}")
+        return "\n".join(scope_lines)
+
+    def _confirm_large_batch(self, manifest: tuple[PrintJob, ...]) -> bool:
+        """Confirm large manifests; accept smaller runs without prompting."""
+        total_jobs = len(manifest)
+        if total_jobs < LARGE_BATCH_THRESHOLD:
+            return True
+        scopes = self._format_manifest_scopes(manifest)
+        return self.ui.ask_yes_no(
+            "Large Batch Confirm",
+            f"This will print {total_jobs} selected schedules.\n\n"
+            f"{scopes}\n\nContinue?",
+        )
+
     def _cancel_if_running(self) -> None:
         """Cancel the current batch if one is active (Escape key handler)."""
-        if self._processing_thread and self._processing_thread.is_alive():
-            self._cancel_event.set()
-            current_progress = (
-                self.ui.progress_var.get() if self.ui.progress_var else 0.0
-            )
-            self.ui.update_status(
-                "Stopping after current document...", current_progress
-            )
-            self.ui.set_print_button_state("disabled")
+        self._request_cancel()
 
     def _cancel_ui_update(self) -> None:
         """Schedule a 'Cancelled' status update on the UI thread."""
@@ -399,7 +416,7 @@ class ShiftPrintApp:
         """
         shift_label = job.shift_type.title()
         day_name = get_english_day_name(job.date)
-        display_date = job.date.strftime("%m/%d/%Y")
+        display_date = job.date.strftime(_DISPLAY_DATE_FORMAT)
         progress = ((job_index + 1) / max(total_jobs, 1)) * 100
         msg = (
             f"Printing {shift_label} Shift: {day_name} {display_date} "
@@ -552,7 +569,7 @@ class ShiftPrintApp:
 
         # Show first N failures
         for i, op in enumerate(failed_operations[:MAX_FAILURE_SUMMARY_SHOWN], 1):
-            date_str = op["date"].strftime("%m/%d/%Y")
+            date_str = op["date"].strftime(_DISPLAY_DATE_FORMAT)
             message += f"{i}. {date_str} {op['shift'].title()} Shift ({op['template']}): {op['error']}\n"
 
         if total > MAX_FAILURE_SUMMARY_SHOWN:
@@ -593,7 +610,7 @@ class ShiftPrintApp:
                 for op in failed_operations:
                     writer.writerow(
                         [
-                            op["date"].strftime("%m/%d/%Y"),
+                            op["date"].strftime(_DISPLAY_DATE_FORMAT),
                             op["shift"],
                             op["template"],
                             op.get("error") or "",

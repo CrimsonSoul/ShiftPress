@@ -157,8 +157,10 @@ def test_preserves_existing_third_thursday_template_rule() -> None:
 @pytest.mark.parametrize("mode", ["weekly", ""])
 def test_rejects_unknown_mode(mode: str) -> None:
     """Unknown modes must fail instead of silently choosing date semantics."""
+    selection = _selection("night", mode=mode)
+
     with pytest.raises(ValueError, match="mode"):
-        build_print_manifest((_selection("night", mode=mode),))
+        build_print_manifest((selection,))
 
 
 def test_rejects_missing_active_date() -> None:

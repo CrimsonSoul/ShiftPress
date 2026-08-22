@@ -76,8 +76,10 @@ class TestGetShiftTemplateName:
 
     def test_invalid_shift_type(self):
         """Invalid shift type should raise ValueError."""
+        target_date = date(2026, 1, 14)
+
         with pytest.raises(ValueError, match="shift_type must be 'day' or 'night'"):
-            get_shift_template_name(date(2026, 1, 14), "invalid")
+            get_shift_template_name(target_date, "invalid")
 
 
 class TestValidateDateRange:
