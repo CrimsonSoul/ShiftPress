@@ -69,8 +69,8 @@ function validateConfiguration(argv, env) {
       cause: error,
     });
   }
-  if ('branch' in scope && scope.branch !== 'test') {
-    throw configurationError('The Sonar CI branch scope must be test.');
+  if ('branch' in scope && scope.branch !== 'main') {
+    throw configurationError('The Sonar CI branch scope must be main.');
   }
   return scope;
 }
@@ -175,7 +175,7 @@ export async function runSonarCi({
     if ('branch' in scope) {
       const timeoutMs = phaseTimeout(deadline, now, 'reviewed-issue reconciliation');
       await reconcile({
-        argv: ['--branch=test', '--apply'],
+        argv: ['--branch=main', '--apply'],
         env,
         timeoutMs,
         requestTimeoutMs: Math.min(REQUEST_TIMEOUT_MS, timeoutMs),

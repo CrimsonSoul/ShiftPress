@@ -71,11 +71,11 @@ function validateConfiguration(env) {
   }
   const serverUrl = validateServerUrl(env.GITHUB_SERVER_URL);
   const pullRequest = env.GITHUB_EVENT_NAME === 'pull_request';
-  const testPush = env.GITHUB_EVENT_NAME === 'push' && env.GITHUB_REF === 'refs/heads/test';
-  if (!pullRequest && !testPush) {
-    throw configurationError('Snyk CI supports only pull requests or pushes targeting test.');
+  const mainPush = env.GITHUB_EVENT_NAME === 'push' && env.GITHUB_REF === 'refs/heads/main';
+  if (!pullRequest && !mainPush) {
+    throw configurationError('Snyk CI supports only pull requests or pushes targeting main.');
   }
-  return { serverUrl, testPush };
+  return { mainPush, serverUrl };
 }
 
 // ShiftPrint is a pip project, so Snyk is invoked directly rather than through
@@ -115,7 +115,7 @@ function repositoryArguments(env, serverUrl) {
   return [
     `--org=${env.SNYK_ORG}`,
     `--project-name=${env.GITHUB_REPOSITORY}`,
-    '--target-reference=test',
+    '--target-reference=main',
     `--remote-repo-url=${serverUrl}/${env.GITHUB_REPOSITORY}.git`,
   ];
 }
@@ -159,7 +159,7 @@ export async function runSnykCi({
 } = {}) {
   try {
     if (typeof now !== 'function') throw configurationError('Snyk CI timing function is invalid.');
-    const { serverUrl, testPush } = validateConfiguration(env);
+    const { mainPush, serverUrl } = validateConfiguration(env);
     const deadline = now() + AGGREGATE_TIMEOUT_MS;
     const projectArgs = repositoryArguments(env, serverUrl);
     await runPhase({
@@ -182,7 +182,7 @@ export async function runSnykCi({
       label: 'Code scan',
       timeoutMs: phaseTimeout(deadline, now, 'Code scan'),
     });
-    if (testPush) {
+    if (mainPush) {
       await runPhase({
         env,
         platform,
@@ -190,8 +190,8 @@ export async function runSnykCi({
         phase: 'monitor',
         args: projectArgs,
         policy: MONITOR_POLICY,
-        label: 'test-branch monitor',
-        timeoutMs: phaseTimeout(deadline, now, 'test-branch monitor'),
+        label: 'main-branch monitor',
+        timeoutMs: phaseTimeout(deadline, now, 'main-branch monitor'),
       });
     }
     return { outcome: SCANNER_OUTCOME.CLEAN };

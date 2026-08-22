@@ -55,10 +55,10 @@ test('runs the clean pull-request phases in exact order with a bounded upload', 
   assert.equal(command.args.join(' ').includes(configuredEnv.SONAR_TOKEN), false);
 });
 
-test('reconciles reviewed findings exactly once only for the test branch', async () => {
+test('reconciles reviewed findings exactly once only for the main branch', async () => {
   const calls = [];
   const result = await runSonarCi({
-    argv: ['--branch=test'],
+    argv: ['--branch=main'],
     env: configuredEnv,
     runCommand: cleanCommand,
     waitAnalysis: async () => calls.push('wait'),
@@ -74,7 +74,7 @@ test('reconciles reviewed findings exactly once only for the test branch', async
   assert.equal(result.outcome, SCANNER_OUTCOME.CLEAN);
   assert.deepEqual(calls, [
     'wait',
-    ['reconcile', ['--branch=test', '--apply']],
+    ['reconcile', ['--branch=main', '--apply']],
     'issues',
     'issues',
     'issues',
@@ -192,7 +192,7 @@ test('uses one aggregate deadline across Sonar upload and API phases', async () 
   const calls = [];
   const reports = [];
   const result = await runSonarCi({
-    argv: ['--branch=test'],
+    argv: ['--branch=main'],
     env: configuredEnv,
     now: () => clock,
     runCommand: async (command) => {
@@ -225,15 +225,15 @@ test('uses one aggregate deadline across Sonar upload and API phases', async () 
   assert.equal(reports.length, 1);
 });
 
-test('rejects missing configuration, insecure hosts, and non-test branch scope', async () => {
+test('rejects missing configuration, insecure hosts, and non-main branch scope', async () => {
   for (const [env, argv] of [
-    [{ ...configuredEnv, SONAR_TOKEN: '' }, ['--branch=test']],
-    [{ ...configuredEnv, SONAR_ORGANIZATION: '' }, ['--branch=test']],
+    [{ ...configuredEnv, SONAR_TOKEN: '' }, ['--branch=main']],
+    [{ ...configuredEnv, SONAR_ORGANIZATION: '' }, ['--branch=main']],
     [
       { ...configuredEnv, SONAR_HOST_URL: ['http:', '//sonar.invalid'].join('') },
-      ['--branch=test'],
+      ['--branch=main'],
     ],
-    [configuredEnv, ['--branch=main']],
+    [configuredEnv, ['--branch=test']],
   ]) {
     await assert.rejects(
       runSonarCi({ argv, env, runCommand: cleanCommand }),

@@ -29,8 +29,10 @@ function sonarProperty(name) {
   return matches[0].slice(prefix.length);
 }
 
-test('test pull requests emit stable build gates without weakening Windows packaging', () => {
-  assert.match(buildWorkflow, /pull_request:\s*\n\s+branches:\s*\n\s+- main\s*\n\s+- test/u);
+test('main pull requests emit stable build gates without weakening Windows packaging', () => {
+  assert.match(buildWorkflow, /push:\s*\n\s+branches:\s*\n\s+- main/u);
+  assert.doesNotMatch(buildWorkflow, /\s+- test\s*$/mu);
+  assert.match(buildWorkflow, /permissions:\s*\n\s+contents: read/u);
 
   const quality = jobBlock(buildWorkflow, 'quality');
   assert.match(quality, /^    name: Build quality gate$/mu);
@@ -42,8 +44,10 @@ test('test pull requests emit stable build gates without weakening Windows packa
 
   const build = jobBlock(buildWorkflow, 'build');
   assert.match(build, /^    needs: \[quality, windows-test\]$/mu);
+  assert.match(build, /^    permissions:\s*\n\s+contents: write$/mu);
   assert.match(build, /Smoke the built exe/u);
   assert.match(build, /Upload artifact/u);
+  assert.match(build, /echo "retention=14"/u);
 });
 
 test('scanner jobs retain stable required names and bounded direct entrypoints', () => {
@@ -70,18 +74,18 @@ test('Sonar generates and consumes one supported Python coverage report', () => 
   assert.match(generated[1], /\.xml$/u);
 });
 
-test('scanner jobs run only for internal test pull requests and merged test pushes', () => {
+test('scanner jobs run only for internal main pull requests and merged main pushes', () => {
   const expected = normalizeExpression(`
-    (github.event_name == 'push' && github.ref == 'refs/heads/test') ||
+    (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
     (github.event_name == 'pull_request' &&
-     github.event.pull_request.base.ref == 'test' &&
+     github.event.pull_request.base.ref == 'main' &&
      github.event.pull_request.head.repo.full_name == github.repository)
   `);
 
   for (const id of ['sonarqube', 'snyk']) {
     const block = jobBlock(securityWorkflow, id);
     const guard = block.match(/^    if: >-\s*\n([\s\S]*?)(?=^    [A-Za-z0-9_-]+:)/mu);
-    assert.ok(guard, `missing internal test guard for ${id}`);
+    assert.ok(guard, `missing internal main guard for ${id}`);
     assert.equal(normalizeExpression(guard[1]), expected);
   }
 });

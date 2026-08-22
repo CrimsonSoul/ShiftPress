@@ -35,7 +35,7 @@ test('runs Open Source and Code with exact bounded repository arguments on pull 
     '--severity-threshold=high',
     '--org=crimsonsoul',
     '--project-name=CrimsonSoul/ShiftPress',
-    '--target-reference=test',
+    '--target-reference=main',
     '--remote-repo-url=https://github.com/CrimsonSoul/ShiftPress.git',
   ]);
   assert.deepEqual(commands[1].args, [
@@ -73,13 +73,13 @@ test('launches the Windows npm shim through the command processor', async () => 
   assert.deepEqual(commands[0].args.slice(0, 5), ['/d', '/s', '/c', 'snyk.cmd', 'test']);
 });
 
-test('adds the monitor command only after clean scans on a test-branch push', async () => {
+test('adds the monitor command only after clean scans on a main-branch push', async () => {
   const commands = [];
   const result = await runSnykCi({
     env: {
       ...configuredEnv,
       GITHUB_EVENT_NAME: 'push',
-      GITHUB_REF: 'refs/heads/test',
+      GITHUB_REF: 'refs/heads/main',
     },
     runCommand: async (command) => {
       commands.push(command.args);
@@ -154,7 +154,7 @@ test('treats monitor availability as warning success but monitor exit 1 as confi
   const pushEnv = {
     ...configuredEnv,
     GITHUB_EVENT_NAME: 'push',
-    GITHUB_REF: 'refs/heads/test',
+    GITHUB_REF: 'refs/heads/main',
   };
   const reports = [];
   let call = 0;
@@ -190,7 +190,7 @@ test('uses one aggregate deadline across sequential Snyk phases', async () => {
     env: {
       ...configuredEnv,
       GITHUB_EVENT_NAME: 'push',
-      GITHUB_REF: 'refs/heads/test',
+      GITHUB_REF: 'refs/heads/main',
     },
     now: () => clock,
     runCommand: async (command) => {
@@ -213,7 +213,7 @@ test('rejects missing credentials and unsupported GitHub context before scanning
     { ...configuredEnv, SNYK_TOKEN: '' },
     { ...configuredEnv, SNYK_ORG: '' },
     { ...configuredEnv, GITHUB_EVENT_NAME: 'workflow_dispatch' },
-    { ...configuredEnv, GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main' },
+    { ...configuredEnv, GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/test' },
     { ...configuredEnv, GITHUB_REPOSITORY: '../other' },
     {
       ...configuredEnv,

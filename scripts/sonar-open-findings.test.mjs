@@ -170,11 +170,11 @@ test('the Sonar CI gate reconciles only after the exact analysis and gates it la
   );
   assert.ok(
     openFindings > reconcileReviewed,
-    'unresolved issues must be checked after test-branch reconciliation',
+    'unresolved issues must be checked after main-branch reconciliation',
   );
   assert.ok(qualityGate > openFindings, 'the exact quality gate must be evaluated last');
   assert.match(runner, /--pull-request=/u);
-  assert.match(runner, /--branch=test/u);
+  assert.match(runner, /--branch=main/u);
 });
 
 test('maps canonical and legacy reviewed states without hiding reopened findings', () => {
