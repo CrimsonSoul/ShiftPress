@@ -5,7 +5,7 @@ import { classifyHttpFailure, findingError, unavailableError } from './scanner-g
 import { normalizeSonarIssueStatus } from './sonar-issue-status.mjs';
 
 const EXPECTED_PROJECT_KEY = 'CrimsonSoul_ShiftPrint';
-const EXPECTED_BRANCH = 'test';
+const EXPECTED_BRANCH = 'main';
 const PAGE_SIZE = 500;
 const MAX_ISSUES = 10_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -101,7 +101,7 @@ export function parseReviewedArgs(argv) {
     index += parsed.consumed;
   }
   if (branch !== EXPECTED_BRANCH) {
-    throw new Error('Reviewed Sonar issue reconciliation is restricted to branch test.');
+    throw new Error('Reviewed Sonar issue reconciliation is restricted to branch main.');
   }
   if (!apply) {
     throw new Error('Reviewed Sonar issue reconciliation requires the explicit --apply latch.');
@@ -528,7 +528,7 @@ export async function reconcileReviewedSonarIssues({
 
 export function formatReconciliationSummary(result) {
   const lines = [
-    `Sonar reviewed issue reconciliation for branch test: transitioned=${result.transitioned.length} already_reviewed=${result.alreadyReviewed.length} fixed_or_missing=${result.fixedOrMissing.length}`,
+    `Sonar reviewed issue reconciliation for branch main: transitioned=${result.transitioned.length} already_reviewed=${result.alreadyReviewed.length} fixed_or_missing=${result.fixedOrMissing.length}`,
   ];
   if (result.transitioned.length > 0) {
     lines.push(`Transitioned: ${result.transitioned.join(', ')}`);

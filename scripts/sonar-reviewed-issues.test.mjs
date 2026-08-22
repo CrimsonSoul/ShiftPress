@@ -65,7 +65,7 @@ test('rejects any inherited or unreviewed exception metadata', () => {
   assert.throws(() => validateReviewedIssueManifest(null), /exactly 0 issues/i);
 });
 
-test('reads one exact project key and requires an explicit apply latch on branch test', () => {
+test('reads one exact project key and requires an explicit apply latch on branch main', () => {
   assert.equal(
     parseProjectKey('sonar.projectName=ShiftPrint\nsonar.projectKey=CrimsonSoul_ShiftPrint\n'),
     PROJECT_KEY,
@@ -76,33 +76,33 @@ test('reads one exact project key and requires an explicit apply latch on branch
     /exactly one/i,
   );
 
-  assert.deepEqual(parseReviewedArgs(['--branch=test', '--apply']), {
+  assert.deepEqual(parseReviewedArgs(['--branch=main', '--apply']), {
     apply: true,
-    branch: 'test',
+    branch: 'main',
   });
-  assert.deepEqual(parseReviewedArgs(['--apply', '--branch', 'test']), {
+  assert.deepEqual(parseReviewedArgs(['--apply', '--branch', 'main']), {
     apply: true,
-    branch: 'test',
+    branch: 'main',
   });
-  assert.throws(() => parseReviewedArgs([]), /restricted to branch test/i);
-  assert.throws(() => parseReviewedArgs(['--branch=test']), /requires the explicit --apply latch/i);
+  assert.throws(() => parseReviewedArgs([]), /restricted to branch main/i);
+  assert.throws(() => parseReviewedArgs(['--branch=main']), /requires the explicit --apply latch/i);
   assert.throws(
-    () => parseReviewedArgs(['--branch=main', '--apply']),
-    /restricted to branch test/i,
+    () => parseReviewedArgs(['--branch=test', '--apply']),
+    /restricted to branch main/i,
   );
   assert.throws(
-    () => parseReviewedArgs(['--branch=test', '--branch=test', '--apply']),
+    () => parseReviewedArgs(['--branch=main', '--branch=main', '--apply']),
     /duplicate --branch/i,
   );
   assert.throws(
-    () => parseReviewedArgs(['--branch=test', '--apply', '--apply']),
+    () => parseReviewedArgs(['--branch=main', '--apply', '--apply']),
     /duplicate --apply/i,
   );
   assert.throws(() => parseReviewedArgs(['--pull-request=42']), /unknown argument/i);
   assert.throws(() => parseReviewedArgs(['--branch']), /missing value/i);
 });
 
-test('paginates current issue states with an exact project and test branch scope', async () => {
+test('paginates current issue states with an exact project and main branch scope', async () => {
   const requests = [];
   const firstPage = Array.from({ length: 500 }, (_, index) => ({
     key: `reviewed-history-${String(index).padStart(3, '0')}`,
@@ -149,7 +149,7 @@ test('paginates current issue states with an exact project and test branch scope
     assert.equal(url.pathname, '/api/issues/search');
     assert.equal(url.searchParams.get('componentKeys'), PROJECT_KEY);
     assert.equal(url.searchParams.get('issueStatuses'), 'OPEN,CONFIRMED,ACCEPTED,FALSE_POSITIVE');
-    assert.equal(url.searchParams.get('branch'), 'test');
+    assert.equal(url.searchParams.get('branch'), 'main');
     assert.equal(url.searchParams.get('ps'), '500');
     assert.equal(url.searchParams.has('pullRequest'), false);
     assert.equal(url.searchParams.has('token'), false);
@@ -409,7 +409,7 @@ test('formats deterministic summaries and redacts hostile token text', () => {
       fixedOrMissing: ['fixed-a'],
     }),
     [
-      'Sonar reviewed issue reconciliation for branch test: transitioned=1 already_reviewed=1 fixed_or_missing=1',
+      'Sonar reviewed issue reconciliation for branch main: transitioned=1 already_reviewed=1 fixed_or_missing=1',
       'Transitioned: transitioned-a',
       'Already reviewed: reviewed-a',
       'Fixed or missing: fixed-a',
@@ -425,7 +425,7 @@ test('requires environment authentication and never emits the token sentinel', a
   const output = [];
   await assert.rejects(
     runSonarReviewedIssues({
-      argv: ['--branch=test', '--apply'],
+      argv: ['--branch=main', '--apply'],
       env: {},
       readProperties: () => `sonar.projectKey=${PROJECT_KEY}\n`,
       write: (line) => output.push(line),
@@ -434,7 +434,7 @@ test('requires environment authentication and never emits the token sentinel', a
   );
   await assert.rejects(
     runSonarReviewedIssues({
-      argv: ['--branch=test', '--apply'],
+      argv: ['--branch=main', '--apply'],
       env: { SONAR_TOKEN: TOKEN },
       fetcher: async () => {
         throw new Error(`network failed while using ${TOKEN}`);
