@@ -31,7 +31,7 @@ function sonarProperty(name) {
 
 test('main pull requests emit stable build gates without weakening Windows packaging', () => {
   assert.match(buildWorkflow, /push:\s*\n\s+branches:\s*\n\s+- main/u);
-  assert.doesNotMatch(buildWorkflow, /\s+- test\s*$/mu);
+  assert.match(buildWorkflow, /pull_request:\s*\n\s+branches:\s*\n\s+- main\s*\n\s+- test/u);
   assert.match(buildWorkflow, /permissions:\s*\n\s+contents: read/u);
 
   const quality = jobBlock(buildWorkflow, 'quality');
@@ -78,7 +78,8 @@ test('scanner jobs run only for internal main pull requests and merged main push
   const expected = normalizeExpression(`
     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
     (github.event_name == 'pull_request' &&
-     github.event.pull_request.base.ref == 'main' &&
+     (github.event.pull_request.base.ref == 'main' ||
+      github.event.pull_request.base.ref == 'test') &&
      github.event.pull_request.head.repo.full_name == github.repository)
   `);
 
