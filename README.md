@@ -71,9 +71,8 @@ mypy src                         # type checking
 pylint src --fail-under=8.0      # linting gate
 ```
 
-All four gates run in CI on pushes to `main` and `test`, and on pull requests to
-`main`. The test suite mocks all Windows-only modules so it can run on any
-platform.
+All four gates run in CI on pushes and pull requests to `main`. The test suite
+mocks all Windows-only modules so it can run on any platform.
 
 Before a release, use the
 [Windows print smoke test](docs/windows-smoke-test.md) to verify real Word COM
@@ -82,14 +81,10 @@ scope runs.
 
 ## Releases
 
-`test` is the working branch. Every push to it runs the quality gates, then
-builds a Windows executable and uploads it as
+`main` is the sole long-lived branch. Every push to it runs the quality gates,
+then builds a Windows executable and uploads it as
 `ShiftPrint-v<version>-<commit>`, so a downloadable build always exists for the
 commit you are working on. Push builds expire after 7 days.
-
-`main` does not trigger a build of its own: it only ever receives commits that
-already passed on `test`, so running everything again would duplicate the work
-for a single commit. Pull requests into `main` run the gates only.
 
 The version is read from `__version__` in `src/__init__.py`; it is not entered
 by hand. To cut a published release:
