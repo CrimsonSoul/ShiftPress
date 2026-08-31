@@ -51,7 +51,7 @@ function page(issues, { pageIndex = 1, total = issues.length } = {}) {
   };
 }
 
-test('starts ShiftPrint with an exact empty reviewed inventory', () => {
+test('starts ShiftPress with an exact empty reviewed inventory', () => {
   assert.equal(validateReviewedIssueManifest(), REVIEWED_ISSUES);
   assert.deepEqual(REVIEWED_ISSUES, []);
   assert.equal(Object.isFrozen(REVIEWED_ISSUES), true);
@@ -67,10 +67,10 @@ test('rejects any inherited or unreviewed exception metadata', () => {
 
 test('reads one exact project key and requires an explicit apply latch on branch main', () => {
   assert.equal(
-    parseProjectKey('sonar.projectName=ShiftPrint\nsonar.projectKey=CrimsonSoul_ShiftPrint\n'),
+    parseProjectKey('sonar.projectName=ShiftPress\nsonar.projectKey=CrimsonSoul_ShiftPrint\n'),
     PROJECT_KEY,
   );
-  assert.throws(() => parseProjectKey('sonar.projectName=ShiftPrint\n'), /sonar\.projectKey/);
+  assert.throws(() => parseProjectKey('sonar.projectName=ShiftPress\n'), /sonar\.projectKey/);
   assert.throws(
     () => parseProjectKey('sonar.projectKey=one\nsonar.projectKey=two\n'),
     /exactly one/i,

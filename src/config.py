@@ -1,5 +1,5 @@
 """
-Configuration management for ShiftPrint application.
+Configuration management for ShiftPress application.
 
 This module handles loading, saving, and validating configuration settings.
 """
@@ -109,6 +109,7 @@ class ConfigManager:
             logger.warning(
                 f"Could not migrate legacy config to {self.config_path}: {e}"
             )
+            return config
 
         # Rename so the next launch does not migrate over a newer edit.
         try:

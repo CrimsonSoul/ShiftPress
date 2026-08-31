@@ -134,7 +134,7 @@ class TestWordProcessor:
         with patch.object(wp, "_normalize_spaces_in_doc"), patch.object(
             wp, "_execute_replace", return_value=True
         ) as mock_exec:
-            wp.replace_dates(mock_doc, current_date)
+            replacements = wp.replace_dates(mock_doc, current_date)
 
             # Should be called 6 times: 3 ordinal-suffix patterns + 3 plain patterns.
             # All patterns run independently; overlap is prevented by
@@ -145,6 +145,7 @@ class TestWordProcessor:
             # Replacement: "Thursday, January 15, 2026"
             calls = [c[0][2] for c in mock_exec.call_args_list]
             assert "Thursday, January 15, 2026" in calls
+            assert replacements == 6
 
     @patch("src.word_processor.pythoncom.CoInitialize")
     @patch("src.word_processor.win32_client.DispatchEx", create=True)
@@ -177,6 +178,31 @@ class TestWordProcessor:
         assert wp.word_app is not None
         mock_coinit.assert_called_once()
         mock_dispatch.assert_called_with("Word.Application")
+
+    @patch("src.word_processor.pythoncom.CoInitialize")
+    @patch("src.word_processor.pythoncom.CoUninitialize")
+    @patch("src.word_processor.win32_client.Dispatch")
+    @patch("src.word_processor.win32_client.DispatchEx", new=None, create=True)
+    def test_initialize_fails_closed_when_macros_cannot_be_disabled(
+        self, mock_dispatch, mock_couninit, mock_coinit
+    ):
+        """Word automation must not continue when macro hardening fails."""
+        app = MagicMock()
+        type(app).AutomationSecurity = property(
+            fset=MagicMock(side_effect=Exception("policy denied"))
+        )
+        mock_dispatch.return_value = app
+
+        wp = WordProcessor()
+
+        with pytest.raises(RuntimeError, match="policy denied"):
+            wp.initialize()
+
+        app.Quit.assert_called_once()
+        mock_coinit.assert_called_once()
+        mock_couninit.assert_called_once()
+        assert wp.word_app is None
+        assert wp._initialized is False
 
     def test_safe_com_call_retry(self, wp):
         """Safe COM call should retry on genuinely transient COM faults."""
@@ -241,8 +267,9 @@ class TestWordProcessor:
         with patch.object(wp, "_normalize_spaces_in_doc"), patch.object(
             wp, "_execute_replace", return_value=False
         ), patch("src.word_processor.logger") as mock_logger:
-            wp.replace_dates(mock_doc, current_date)
+            replacements = wp.replace_dates(mock_doc, current_date)
             mock_logger.warning.assert_called()
+            assert replacements == 0
 
     def test_normalize_spaces_called_before_patterns(self, wp):
         """Should normalize non-breaking spaces before running date patterns."""
@@ -418,7 +445,7 @@ class TestWordProcessor:
         mock_doc.Unprotect.assert_called_once()
 
     def test_print_document_active_printer_failure(self, wp, tmp_path):
-        """print_document should continue even if ActivePrinter assignment fails."""
+        """print_document must not fall back to an unintended printer."""
         wp._initialized = True
         wp.word_app = MagicMock()
 
@@ -440,9 +467,29 @@ class TestWordProcessor:
                     str(tmp_path), "Wednesday", date(2026, 1, 14), "Bad Printer"
                 )
 
-        # Should still succeed (ActivePrinter failure is non-fatal)
-        assert success is True
-        mock_doc.PrintOut.assert_called_once_with(False)
+        assert success is False
+        assert "Printer not found" in (error or "")
+        mock_doc.PrintOut.assert_not_called()
+
+    def test_print_document_no_date_replacement_blocks_print(self, wp, tmp_path):
+        """A template with no supported date must not be printed unchanged."""
+        wp._initialized = True
+        wp.word_app = MagicMock()
+        (tmp_path / "Wednesday.docx").write_text("dummy")
+
+        mock_doc = MagicMock()
+        mock_doc.ProtectionType = -1  # PROTECTION_NONE
+        wp.word_app.Documents.Open.return_value = mock_doc
+
+        with patch.object(wp, "safe_com_call", side_effect=lambda f, *a, **kw: f(*a)):
+            with patch.object(wp, "replace_dates", return_value=0):
+                success, error = wp.print_document(
+                    str(tmp_path), "Wednesday", date(2026, 1, 14), "Printer"
+                )
+
+        assert success is False
+        assert "date" in (error or "").lower()
+        mock_doc.PrintOut.assert_not_called()
 
     def test_print_document_closes_on_printout_error(self, wp, tmp_path):
         """print_document finally block should close doc if PrintOut raises."""

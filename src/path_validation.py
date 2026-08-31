@@ -1,5 +1,5 @@
 """
-Path validation and safety utilities for ShiftPrint application.
+Path validation and safety utilities for ShiftPress application.
 
 This module provides functions to validate and sanitize file paths to prevent
 security issues like path traversal attacks.

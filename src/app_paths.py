@@ -9,13 +9,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-APP_DIRNAME = "ShiftPrint"
-APP_DOTNAME = ".shiftprint"
+APP_DIRNAME = "ShiftPress"
+APP_DOTNAME = ".shiftpress"
 
-# The app was named ShiftPress before 2026-07-31. Existing installs still keep
-# their config there, so the old location stays reachable for migration.
-LEGACY_APP_DIRNAME = "ShiftPress"
-LEGACY_APP_DOTNAME = ".shiftpress"
+# The app was named ShiftPrint from 2026-07-31 until this rename. Existing
+# installs may still keep their config there, so that location stays reachable.
+LEGACY_APP_DIRNAME = "ShiftPrint"
+LEGACY_APP_DOTNAME = ".shiftprint"
 
 
 def _data_dir_for(app_dirname: str, dotname: str) -> Path:
@@ -45,8 +45,8 @@ def get_data_dir() -> Path:
     The directory is *not* created by this function; callers are responsible
     for calling ``mkdir()`` if needed.
 
-    Windows: %APPDATA%\\ShiftPrint (fallback to %LOCALAPPDATA%)
-    Other OSes (dev/test): ~/.shiftprint
+    Windows: %APPDATA%\\ShiftPress (fallback to %LOCALAPPDATA%)
+    Other OSes (dev/test): ~/.shiftpress
 
     Returns:
         Path to the per-user data directory.
@@ -56,7 +56,7 @@ def get_data_dir() -> Path:
 
 
 def get_legacy_data_dir() -> Path:
-    """Return the per-user data directory used before the ShiftPrint rename.
+    """Return the per-user data directory used by ShiftPrint releases.
 
     Returns:
         Path to the pre-rename data directory. Not created.

@@ -104,7 +104,7 @@ test('warns and succeeds for bounded or documented transient availability failur
 test('blocks confirmed findings, authentication failures, and ambiguous upload failures', async () => {
   const phases = {
     waitAnalysis: async () => {},
-    readIssues: async () => ({ summary: { open: ['shiftprint-finding'] } }),
+    readIssues: async () => ({ summary: { open: ['shiftpress-finding'] } }),
     checkGate: async () => {},
   };
   await assert.rejects(

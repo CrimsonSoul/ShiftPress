@@ -1,6 +1,6 @@
-# ShiftPrint
+# ShiftPress
 
-ShiftPrint is a Windows desktop app that batch-prints shift schedule templates via Microsoft Word COM automation.
+ShiftPress is a Windows desktop app that batch-prints shift schedule templates via Microsoft Word COM automation.
 
 ![Platform](https://img.shields.io/badge/platform-Windows-0a7ea4) ![Language](https://img.shields.io/badge/language-Python%203.12-2ea043) ![UI](https://img.shields.io/badge/ui-Tkinter%2Fttk-4b5563) ![Automation](https://img.shields.io/badge/automation-Word%20COM-1f6feb)
 
@@ -83,7 +83,7 @@ scope runs.
 
 `main` is the sole long-lived branch. Every push to it runs the quality gates,
 then builds a Windows executable and uploads it as
-`ShiftPrint-v<version>-<commit>`, so a downloadable build always exists for the
+`ShiftPress-v<version>-<commit>`, so a downloadable build always exists for the
 commit you are working on. Push builds expire after 7 days.
 
 The version is read from `__version__` in `src/__init__.py`; it is not entered
@@ -99,7 +99,7 @@ and in-app version all come from that one value.
 ## Security
 
 - Word documents open in read-only mode during processing; originals are never modified
-- Word macros are force-disabled on every document open
+- Word macros are force-disabled before document open; ShiftPress stops if that safety setting cannot be applied
 - Path validation blocks traversal outside configured template root directories
 - Template names that collide after normalization are rejected, so a run can never
   print an arbitrary file chosen by directory order

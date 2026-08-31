@@ -156,7 +156,7 @@ test('kills a command at its internal deadline', async () => {
 });
 
 test('bounds an npm command and its descendant process tree', async () => {
-  const fixture = mkdtempSync(join(tmpdir(), 'shiftprint-scanner-gate-'));
+  const fixture = mkdtempSync(join(tmpdir(), 'shiftpress-scanner-gate-'));
   try {
     writeFileSync(
       join(fixture, 'package.json'),

@@ -1,3 +1,3 @@
 """
-Tests for ShiftPrint application.
+Tests for ShiftPress application.
 """

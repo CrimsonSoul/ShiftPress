@@ -48,6 +48,11 @@ test('main pull requests emit stable build gates without weakening Windows packa
   assert.match(build, /Smoke the built exe/u);
   assert.match(build, /Upload artifact/u);
   assert.match(build, /echo "retention=14"/u);
+
+  assert.match(
+    build,
+    /if: github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main' && inputs\.create_release/u,
+  );
 });
 
 test('scanner jobs retain stable required names and bounded direct entrypoints', () => {

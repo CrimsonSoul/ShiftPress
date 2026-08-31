@@ -1,5 +1,5 @@
 @echo off
-echo Setting up ShiftPrint...
+echo Setting up ShiftPress...
 
 REM Check if Python is installed
 python --version >nul 2>&1

@@ -45,7 +45,7 @@ class TestGetDataDir:
             assert str(result) == f"/mock/home/{APP_DIRNAME}"
 
     def test_non_windows(self):
-        """Should use ~/.shiftprint on non-Windows."""
+        """Should use ~/.shiftpress on non-Windows."""
 
         class _MockPath(PurePosixPath):
             @classmethod
@@ -56,19 +56,19 @@ class TestGetDataDir:
             "src.app_paths.Path", _MockPath
         ):
             result = get_data_dir()
-            assert str(result) == "/home/testuser/.shiftprint"
+            assert str(result) == "/home/testuser/.shiftpress"
 
     def test_legacy_dir_differs_from_current_on_windows(self):
         """Migration needs both locations reachable and distinct.
 
-        The "ShiftPress" literal here is deliberate: it pins the pre-rename
+        The "ShiftPrint" literal here is deliberate: it pins the pre-rename
         directory an upgrading operator's config still lives in.
         """
         with patch("src.app_paths.os.name", "nt"), patch(
             "src.app_paths.Path", PurePosixPath
         ), patch.dict(os.environ, {"APPDATA": "/mock/appdata"}, clear=False):
-            assert str(get_data_dir()) == "/mock/appdata/ShiftPrint"
-            assert str(get_legacy_data_dir()) == "/mock/appdata/ShiftPress"
+            assert str(get_data_dir()) == "/mock/appdata/ShiftPress"
+            assert str(get_legacy_data_dir()) == "/mock/appdata/ShiftPrint"
 
     def test_legacy_dir_differs_from_current_elsewhere(self):
         """The non-Windows dev path also has to be distinguishable."""
@@ -81,8 +81,8 @@ class TestGetDataDir:
         with patch("src.app_paths.os.name", "posix"), patch(
             "src.app_paths.Path", _MockPath
         ):
-            assert str(get_data_dir()) == "/home/testuser/.shiftprint"
-            assert str(get_legacy_data_dir()) == "/home/testuser/.shiftpress"
+            assert str(get_data_dir()) == "/home/testuser/.shiftpress"
+            assert str(get_legacy_data_dir()) == "/home/testuser/.shiftprint"
 
     def test_returns_path_object(self):
         """Should always return a Path-like object."""

@@ -1,15 +1,15 @@
 ---
-name: ShiftPrint
+name: ShiftPress
 description: A low-risk native print console for deliberate shift-schedule runs.
 ---
 
-# Design System: ShiftPrint
+# Design System: ShiftPress
 
 ## Overview
 
 **Creative North Star: "The Operator's Print Desk"**
 
-ShiftPrint should feel like a focused Windows utility an operator can trust
+ShiftPress should feel like a focused Windows utility an operator can trust
 while preparing physical print jobs. It favors familiar controls, explicit
 state, compact working density, and plain-language confirmation over decorative
 metaphors. The interface may be distinctive through disciplined hierarchy and
@@ -128,13 +128,15 @@ groups side by side, with the exact default dimensions resolved against the
 rendered Tkinter implementation and Windows text scaling. Related controls live
 inside bordered native groups. The active print scope remains visible without
 switching tabs or opening a modal. The window stays resizable and may expand
-automatically when native content would otherwise clip.
+automatically when native content would otherwise clip. On a constrained
+display or at high Windows text scaling, the work surface scrolls vertically
+and follows keyboard focus so the primary action always remains reachable.
 
 Use a compact spacing rhythm with larger separation between configuration,
 schedule intent, and execution. Setup appears as a safe summary by default;
-`Change…` opens a compact native Setup dialog so configuration never displaces
-the shift cards, manifest, progress, or print action. `Done` returns focus to
-the unchanged work surface without changing entered values. Preserve a clear
+`Setup…` opens a compact native Setup dialog so configuration never displaces
+the shift cards, manifest, progress, or print action. `Apply` keeps edits;
+`Cancel` restores the folders and printer present when Setup opened. Preserve a clear
 top-to-bottom sequence: understand setup, choose work, confirm exact scope,
 then print.
 
