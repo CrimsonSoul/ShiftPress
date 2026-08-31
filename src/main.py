@@ -65,6 +65,14 @@ class _BatchRequest:
     night_folder: str
 
 
+def _batch_stop_status(completed_jobs: int, total_jobs: int) -> str:
+    """Describe how far a batch progressed before an unexpected stop."""
+    if completed_jobs == 0:
+        return "Printing stopped before any schedules were completed"
+    schedule_noun = "schedule" if total_jobs == 1 else "schedules"
+    return f"Printing stopped after {completed_jobs} of {total_jobs} {schedule_noun}"
+
+
 class ShiftPressApp:
     """Main application controller.
 
@@ -481,18 +489,8 @@ class ShiftPressApp:
         )
         return success
 
-    def _process_batch(self, request: _BatchRequest) -> None:
-        """Process exactly the concrete jobs in a validated request.
-
-        Args:
-            request: Immutable validated manifest and persisted setup values.
-        """
-        total_jobs = len(request.manifest)
-        if total_jobs == 0:
-            logger.error("Attempted to process an empty print manifest")
-            self._safe_after(self._reset_ui)
-            return
-
+    def _persist_batch_config(self, request: _BatchRequest) -> None:
+        """Persist the validated setup without preventing the current run."""
         config = AppConfig(
             day_folder=request.day_folder,
             night_folder=request.night_folder,
@@ -508,6 +506,68 @@ class ShiftPressApp:
                 )
             )
 
+    def _show_batch_outcome(
+        self,
+        total_jobs: int,
+        failed_operations: list[FailedOperation],
+    ) -> None:
+        """Report a completed batch, including any individual print failures."""
+        if failed_operations:
+            failure_count = len(failed_operations)
+            failure_noun = "schedule" if failure_count == 1 else "schedules"
+            self._safe_after(
+                lambda: self.ui.update_status(
+                    f"Completed with {failure_count} failed {failure_noun}",
+                    PROGRESS_MAX,
+                    level="error",
+                )
+            )
+            report_path = self._write_failure_report(failed_operations)
+            snapshot = list(failed_operations)
+            self._safe_after(lambda: self._show_failure_summary(snapshot, report_path))
+            return
+
+        schedule_noun = "schedule" if total_jobs == 1 else "schedules"
+        self._safe_after(
+            lambda: self.ui.update_status(
+                f"All {total_jobs} {schedule_noun} sent to printer",
+                PROGRESS_MAX,
+                level="success",
+            )
+        )
+        self._safe_after(
+            lambda: self.ui.show_info(
+                "Success",
+                f"All {total_jobs} {schedule_noun} were sent to the printer.",
+            )
+        )
+
+    def _show_batch_error(self, completed_jobs: int, total_jobs: int) -> None:
+        """Report an unexpected batch failure with preserved progress."""
+        progress = (completed_jobs / max(total_jobs, 1)) * PROGRESS_MAX
+        status = _batch_stop_status(completed_jobs, total_jobs)
+        self._safe_after(lambda: self.ui.update_status(status, progress, level="error"))
+        self._safe_after(
+            lambda: self.ui.show_error(
+                "Printing stopped",
+                "Review the selected printer and template folders, then try again. "
+                "If the problem repeats, select Open logs and contact support.",
+            )
+        )
+
+    def _process_batch(self, request: _BatchRequest) -> None:
+        """Process exactly the concrete jobs in a validated request.
+
+        Args:
+            request: Immutable validated manifest and persisted setup values.
+        """
+        total_jobs = len(request.manifest)
+        if total_jobs == 0:
+            logger.error("Attempted to process an empty print manifest")
+            self._safe_after(self._reset_ui)
+            return
+
+        self._persist_batch_config(request)
         logger.info(f"Processing {total_jobs} selected schedules")
         failed_operations: list[FailedOperation] = []
         completed_jobs = 0
@@ -535,61 +595,11 @@ class ShiftPressApp:
                     )
                     completed_jobs += 1
 
-                if failed_operations:
-                    failure_count = len(failed_operations)
-                    failure_noun = "schedule" if failure_count == 1 else "schedules"
-                    self._safe_after(
-                        lambda: self.ui.update_status(
-                            f"Completed with {failure_count} failed {failure_noun}",
-                            PROGRESS_MAX,
-                            level="error",
-                        )
-                    )
-                    report_path = self._write_failure_report(failed_operations)
-                    snapshot = list(failed_operations)
-                    self._safe_after(
-                        lambda: self._show_failure_summary(snapshot, report_path)
-                    )
-                else:
-                    schedule_noun = "schedule" if total_jobs == 1 else "schedules"
-                    self._safe_after(
-                        lambda: self.ui.update_status(
-                            f"All {total_jobs} {schedule_noun} sent to printer",
-                            PROGRESS_MAX,
-                            level="success",
-                        )
-                    )
-                    self._safe_after(
-                        lambda: self.ui.show_info(
-                            "Success",
-                            f"All {total_jobs} {schedule_noun} were sent to the printer.",
-                        )
-                    )
+                self._show_batch_outcome(total_jobs, failed_operations)
 
         except Exception:
             logger.exception("Error during batch processing")
-            progress = (completed_jobs / max(total_jobs, 1)) * PROGRESS_MAX
-            if completed_jobs:
-                status = (
-                    f"Printing stopped after {completed_jobs} of {total_jobs} "
-                    f"schedule{'' if total_jobs == 1 else 's'}"
-                )
-            else:
-                status = "Printing stopped before any schedules were completed"
-            self._safe_after(
-                lambda: self.ui.update_status(
-                    status,
-                    progress,
-                    level="error",
-                )
-            )
-            self._safe_after(
-                lambda: self.ui.show_error(
-                    "Printing stopped",
-                    "Review the selected printer and template folders, then try again. "
-                    "If the problem repeats, select Open logs and contact support.",
-                )
-            )
+            self._show_batch_error(completed_jobs, total_jobs)
         finally:
             self._safe_after(self._reset_ui)
 

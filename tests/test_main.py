@@ -35,6 +35,14 @@ def _run_scheduled_callbacks(app: ShiftPressApp) -> None:
         callback()
 
 
+def test_batch_stop_status_preserves_completed_progress_language() -> None:
+    """The extracted batch error copy must preserve zero and partial outcomes."""
+    status_for = getattr(main_module, "_batch_stop_status", None)
+    assert callable(status_for)
+    assert status_for(0, 2) == "Printing stopped before any schedules were completed"
+    assert status_for(1, 2) == "Printing stopped after 1 of 2 schedules"
+
+
 class TestShiftPressApp:
     """Tests for ShiftPressApp class."""
 

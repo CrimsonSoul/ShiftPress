@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import src.ui as ui_module
 from src.constants import COLORS, FONTS
 from src.ui import ScheduleAppUI, _PATH_PLACEHOLDER
 
@@ -901,6 +902,27 @@ class TestScheduleAppUI:
         for msg in ("Cancelled by user", "Error occurred", "Print failed"):
             ui.update_status(msg, 0.0)
             ui.status_label.config.assert_called_with(text=msg, style="Error.TLabel")
+
+    def test_status_style_helper_preserves_explicit_and_inferred_states(self):
+        """The extracted status decision must preserve every public style rule."""
+        style_for = getattr(ui_module, "_status_style", None)
+        assert callable(style_for)
+        assert style_for("Anything", "success") == "Success.TLabel"
+        assert style_for("Anything", "error") == "Error.TLabel"
+        assert style_for("Anything", "info") == "Sub.TLabel"
+        assert style_for("Print complete", None) == "Success.TLabel"
+        assert style_for("Print failed", None) == "Error.TLabel"
+        assert style_for("Processing", None) == "Sub.TLabel"
+
+    def test_manifest_blocker_helper_keeps_missing_printer_actionable(self, ui):
+        """The extracted blocker decision must keep Print disabled without a printer."""
+        blocker_for = getattr(ui_module, "_manifest_blocker", None)
+        assert callable(blocker_for)
+        selections = ui.get_shift_selections()
+        assert (
+            blocker_for(selections, (), (MagicMock(),), "Choose a printer")
+            == "Choose a printer in Setup"
+        )
 
     @patch("tkinter.messagebox.showerror")
     def test_show_error(self, mock_error, ui):

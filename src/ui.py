@@ -79,6 +79,57 @@ _STYLE_CARD_CHECKBUTTON = "Card.TCheckbutton"
 _STYLE_CARD_RADIOBUTTON = "Card.TRadiobutton"
 _DATE_ENTRY_SELECTED_EVENT = "<<DateEntrySelected>>"
 _DATE_PATTERN = "mm/dd/yyyy"
+_FOCUS_IN_EVENT = "<FocusIn>"
+_CONFIGURE_EVENT = "<Configure>"
+_PRINT_BUTTON_LABEL = "Print schedules"
+
+
+def _status_style(
+    message: str,
+    level: Optional[Literal["info", "success", "error"]],
+) -> str:
+    """Return the visual style for an explicit or inferred status level."""
+    if level == "success":
+        return _STYLE_SUCCESS_LABEL
+    if level == "error":
+        return _STYLE_ERROR_LABEL
+    if level is not None:
+        return _STYLE_SUB_LABEL
+
+    message_lower = message.lower()
+    if "complete" in message_lower:
+        return _STYLE_SUCCESS_LABEL
+    if any(token in message_lower for token in ("cancel", "error", "fail")):
+        return _STYLE_ERROR_LABEL
+    return _STYLE_SUB_LABEL
+
+
+def _manifest_blocker(
+    selections: tuple[ShiftSelection, ShiftSelection],
+    invalid: tuple[ShiftSelection, ...],
+    manifest: tuple[Any, ...],
+    printer_label: str,
+) -> Optional[str]:
+    """Return the first local condition that must block the Print action."""
+    if invalid:
+        names = " and ".join(selection.shift_type.title() for selection in invalid)
+        return f"Fix {names} date selection"
+    if not manifest:
+        return "Select at least one Night or Day schedule"
+
+    missing_folder = next(
+        (
+            selection
+            for selection in selections
+            if selection.enabled and not selection.folder.strip()
+        ),
+        None,
+    )
+    if missing_folder is not None:
+        return f"Choose {missing_folder.shift_type.title()} Templates in Setup"
+    if printer_label == "Choose a printer":
+        return "Choose a printer in Setup"
+    return None
 
 
 def _get_work_area(window: tk.Misc) -> tuple[int, int, int, int]:
@@ -158,7 +209,7 @@ def _setup_placeholder(entry: ttk.Entry, placeholder: str) -> None:
             entry.delete(0, tk.END)
             entry.config(foreground=COLORS.text_main)
 
-    entry.bind("<FocusIn>", _hide, add="+")
+    entry.bind(_FOCUS_IN_EVENT, _hide, add="+")
     entry.bind("<FocusOut>", _show, add="+")
     # Show placeholder initially if entry is empty.
     _show()
@@ -690,10 +741,10 @@ class ScheduleAppUI:
         self._main_content_window = self._main_canvas.create_window(
             (0, 0), window=bg_canvas, anchor="nw"
         )
-        bg_canvas.bind("<Configure>", self._sync_main_scroll_region)
-        self._main_canvas.bind("<Configure>", self._resize_main_content)
+        bg_canvas.bind(_CONFIGURE_EVENT, self._sync_main_scroll_region)
+        self._main_canvas.bind(_CONFIGURE_EVENT, self._resize_main_content)
         self.root.bind("<MouseWheel>", self._scroll_main_content, add="+")
-        self.root.bind("<FocusIn>", self._ensure_focus_visible, add="+")
+        self.root.bind(_FOCUS_IN_EVENT, self._ensure_focus_visible, add="+")
 
         self._create_header(bg_canvas)
         self._create_setup_card(bg_canvas)
@@ -893,10 +944,10 @@ class ScheduleAppUI:
         self._setup_content_window = self._setup_canvas.create_window(
             (0, 0), window=canvas, anchor="nw"
         )
-        canvas.bind("<Configure>", self._sync_setup_scroll_region)
-        self._setup_canvas.bind("<Configure>", self._resize_setup_content)
+        canvas.bind(_CONFIGURE_EVENT, self._sync_setup_scroll_region)
+        self._setup_canvas.bind(_CONFIGURE_EVENT, self._resize_setup_content)
         dialog.bind("<MouseWheel>", self._scroll_setup_content, add="+")
-        dialog.bind("<FocusIn>", self._ensure_setup_focus_visible, add="+")
+        dialog.bind(_FOCUS_IN_EVENT, self._ensure_setup_focus_visible, add="+")
         ttk.Label(canvas, text="Setup", style=_STYLE_HEADER_LABEL).pack(anchor="w")
         ttk.Label(
             canvas,
@@ -1653,7 +1704,7 @@ class ScheduleAppUI:
 
         self.print_btn = ttk.Button(
             footer,
-            text="Print schedules",
+            text=_PRINT_BUTTON_LABEL,
             underline=0,
             style=_STYLE_PRIMARY_BUTTON,
             width=20,
@@ -1835,7 +1886,7 @@ class ScheduleAppUI:
     def _print_button_text(count: int) -> str:
         """Return the count-bearing label for the primary action."""
         if count == 0:
-            return "Print schedules"
+            return _PRINT_BUTTON_LABEL
         if count == 1:
             return "Print 1 schedule"
         return f"Print {count} schedules"
@@ -1892,19 +1943,71 @@ class ScheduleAppUI:
             row_number += 1
         return title, lines
 
+    def _show_dependency_manifest_error(self) -> bool:
+        """Render the missing-date-control state and report whether it handled view."""
+        if len(self._shift_panels) == 2:
+            return False
+        if not self._dependency_error:
+            return True
+        if self.manifest_title_label is not None:
+            self.manifest_title_label.config(
+                text="Print scope: Date selection unavailable"
+            )
+        if self.manifest_label is not None:
+            self.manifest_label.config(text=self._dependency_error)
+        if self.print_btn is not None:
+            self.print_btn.config(text=_PRINT_BUTTON_LABEL)
+            self.print_btn.config(state="disabled")
+        return True
+
+    def _manifest_preview_data(
+        self,
+        selections: tuple[ShiftSelection, ShiftSelection],
+        errors: dict[ShiftType, Optional[str]],
+    ) -> tuple[tuple[PrintJob, ...], str, list[str], tuple[ShiftSelection, ...]]:
+        """Build the neutral preview data before local blockers are applied."""
+        invalid = tuple(
+            selection for selection in selections if errors[selection.shift_type]
+        )
+        if invalid:
+            names = " and ".join(selection.shift_type.title() for selection in invalid)
+            title = f"Print scope: Check {names} date selection"
+            lines = [errors[selection.shift_type] or "" for selection in invalid]
+            return (), title, lines, invalid
+
+        manifest = build_print_manifest(selections)
+        title, lines = self._describe_manifest(selections, manifest)
+        return manifest, title, lines, invalid
+
+    def _render_manifest_preview(
+        self,
+        title: str,
+        lines: list[str],
+        manifest_count: int,
+        blocker: Optional[str],
+        update_status: bool,
+    ) -> None:
+        """Apply prepared manifest copy and action state to optional widgets."""
+        if self.manifest_title_label is not None:
+            self.manifest_title_label.config(text=title)
+        if self.manifest_label is not None:
+            self.manifest_label.config(text="\n".join(lines))
+        if update_status and self.status_label is not None:
+            status_text = (
+                blocker or "Scope selected. Preflight runs when you select Print."
+            )
+            status_style = _STYLE_ERROR_LABEL if blocker else _STYLE_SUB_LABEL
+            self.status_label.config(text=status_text, style=status_style)
+        if self.print_btn is not None:
+            self.print_btn.config(text=self._print_button_text(manifest_count))
+            state: Literal["normal", "disabled"] = (
+                "normal" if blocker is None and self._inputs_enabled else "disabled"
+            )
+            self.print_btn.config(state=state)
+
     def refresh_manifest_preview(self, update_status: bool = True) -> None:
         """Refresh the preflight-neutral manifest copy and count-aware action."""
-        if len(self._shift_panels) != 2:
-            if self._dependency_error:
-                if self.manifest_title_label is not None:
-                    self.manifest_title_label.config(
-                        text="Print scope: Date selection unavailable"
-                    )
-                if self.manifest_label is not None:
-                    self.manifest_label.config(text=self._dependency_error)
-                if self.print_btn is not None:
-                    self.print_btn.config(text="Print schedules")
-                    self.print_btn.config(state="disabled")
+        if self._show_dependency_manifest_error():
             return
 
         selections = self.get_shift_selections()
@@ -1912,16 +2015,9 @@ class ScheduleAppUI:
             selection.shift_type: selection.validate() for selection in selections
         }
         self._refresh_shift_counts(selections, errors)
-
-        invalid = [s for s in selections if errors[s.shift_type]]
-        if invalid:
-            manifest: tuple[PrintJob, ...] = ()
-            names = " and ".join(s.shift_type.title() for s in invalid)
-            title = f"Print scope: Check {names} date selection"
-            lines = [errors[s.shift_type] or "" for s in invalid]
-        else:
-            manifest = build_print_manifest(selections)
-            title, lines = self._describe_manifest(selections, manifest)
+        manifest, title, lines, invalid = self._manifest_preview_data(
+            selections, errors
+        )
 
         printer = self.get_printer_name()
         printer_label = (
@@ -1930,44 +2026,12 @@ class ScheduleAppUI:
             else "Choose a printer"
         )
         lines.append(f"Printer: {printer_label}")
-
-        blocker: Optional[str] = None
-        if invalid:
-            names = " and ".join(s.shift_type.title() for s in invalid)
-            blocker = f"Fix {names} date selection"
-        elif not manifest:
-            blocker = "Select at least one Night or Day schedule"
-        else:
-            for selection in selections:
-                if selection.enabled and not selection.folder.strip():
-                    blocker = (
-                        f"Choose {selection.shift_type.title()} Templates in Setup"
-                    )
-                    break
-            if blocker is None and printer_label == "Choose a printer":
-                blocker = "Choose a printer in Setup"
-
+        blocker = _manifest_blocker(selections, invalid, manifest, printer_label)
         if blocker:
             lines.append(f"Cannot print: {blocker}")
-
-        if self.manifest_title_label is not None:
-            self.manifest_title_label.config(text=title)
-        if self.manifest_label is not None:
-            self.manifest_label.config(text="\n".join(lines))
-        if update_status and self.status_label is not None:
-            if blocker:
-                self.status_label.config(text=blocker, style=_STYLE_ERROR_LABEL)
-            else:
-                self.status_label.config(
-                    text="Scope selected. Preflight runs when you select Print.",
-                    style=_STYLE_SUB_LABEL,
-                )
-        if self.print_btn is not None:
-            self.print_btn.config(text=self._print_button_text(len(manifest)))
-            state: Literal["normal", "disabled"] = (
-                "normal" if blocker is None and self._inputs_enabled else "disabled"
-            )
-            self.print_btn.config(state=state)
+        self._render_manifest_preview(
+            title, lines, len(manifest), blocker, update_status
+        )
 
     def set_processing_mode(self, processing: bool) -> None:
         """Switch the primary action between print and cancellation states."""
@@ -2080,33 +2144,22 @@ class ScheduleAppUI:
         if self._progress_row is not None:
             self._progress_row.grid()
         if self.status_label:
-            if level == "success":
-                style = _STYLE_SUCCESS_LABEL
-            elif level == "error":
-                style = _STYLE_ERROR_LABEL
-            elif level is not None:
-                style = _STYLE_SUB_LABEL
-            else:
-                # Infer from message for callers that don't pass level.
-                msg_lower = message.lower()
-                if "complete" in msg_lower:
-                    style = _STYLE_SUCCESS_LABEL
-                elif (
-                    "cancel" in msg_lower or "error" in msg_lower or "fail" in msg_lower
-                ):
-                    style = _STYLE_ERROR_LABEL
-                else:
-                    style = _STYLE_SUB_LABEL
+            style = _status_style(message, level)
             self.status_label.config(text=message, style=style)
-            if self._logs_btn is not None:
-                if style == _STYLE_ERROR_LABEL:
-                    self._logs_btn.pack(side="left", padx=(12, 0))
-                else:
-                    self._logs_btn.pack_forget()
+            self._set_logs_button_visibility(style)
         if self.progress_var:
             self.progress_var.set(progress)
         if self._progress_pct:
             self._progress_pct.config(text=f"{int(progress)}%")
+
+    def _set_logs_button_visibility(self, status_style: str) -> None:
+        """Show the logs shortcut only while an error status is visible."""
+        if self._logs_btn is None:
+            return
+        if status_style == _STYLE_ERROR_LABEL:
+            self._logs_btn.pack(side="left", padx=(12, 0))
+            return
+        self._logs_btn.pack_forget()
 
     # ------------------------------------------------------------------
     # Dialogs
