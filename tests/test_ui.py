@@ -333,6 +333,25 @@ class TestScheduleAppUI:
         root.geometry.assert_called_once_with("1040x688")
         ui._show_main_scrollbar.assert_called_once()
 
+    def test_main_overflow_helpers_resize_and_scroll_visible_content(self, ui):
+        """The main viewport must expose and operate its scrollbar when constrained."""
+        event = MagicMock(width=640, height=480, delta=60)
+        ui._main_content.winfo_reqheight.return_value = 900
+        ui._main_scrollbar.winfo_ismapped.return_value = True
+
+        ui._sync_main_scroll_region()
+        ui._resize_main_content(event)
+        ui._scroll_main_content(event)
+
+        ui._main_canvas.configure.assert_any_call(
+            scrollregion=ui._main_canvas.bbox.return_value
+        )
+        ui._main_canvas.itemconfigure.assert_called_with(
+            ui._main_content_window, width=640
+        )
+        ui._main_scrollbar.pack.assert_called_with(side="right", fill="y")
+        ui._main_canvas.yview_scroll.assert_called_with(-1, "units")
+
     def test_windows_work_area_keeps_the_main_window_above_the_taskbar(self, ui, root):
         """Centering must use Windows' work area, not the taskbar-covered screen."""
         root.winfo_width.return_value = 1040
@@ -375,6 +394,25 @@ class TestScheduleAppUI:
         geometry = dialog.geometry.call_args.args[0]
         assert geometry.startswith("720x520+")
         ui._show_setup_scrollbar.assert_called_once()
+
+    def test_setup_overflow_helpers_resize_and_scroll_visible_content(self, ui):
+        """The Setup viewport must expose and operate its scrollbar when constrained."""
+        event = MagicMock(width=620, height=400, delta=-60)
+        ui._setup_content.winfo_reqheight.return_value = 700
+        ui._setup_scrollbar.winfo_ismapped.return_value = True
+
+        ui._sync_setup_scroll_region()
+        ui._resize_setup_content(event)
+        ui._scroll_setup_content(event)
+
+        ui._setup_canvas.configure.assert_any_call(
+            scrollregion=ui._setup_canvas.bbox.return_value
+        )
+        ui._setup_canvas.itemconfigure.assert_called_with(
+            ui._setup_content_window, width=620
+        )
+        ui._setup_scrollbar.pack.assert_called_with(side="right", fill="y")
+        ui._setup_canvas.yview_scroll.assert_called_with(1, "units")
 
     def test_manifest_preview_uses_actual_selected_job_count(self, ui):
         """The visible manifest and action should reflect independent jobs."""
