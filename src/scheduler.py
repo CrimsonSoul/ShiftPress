@@ -1,5 +1,5 @@
 """
-Date and scheduling logic for ShiftPrint application.
+Date and scheduling logic for ShiftPress application.
 
 This module handles date calculations, including special scheduling rules
 like third Thursday detection.

@@ -1,5 +1,5 @@
 """
-Constants for ShiftPrint application.
+Constants for ShiftPress application.
 
 This module contains all named constants used throughout the application
 to avoid magic numbers and strings.
@@ -85,7 +85,7 @@ DOCX_EXTENSION: Final = ".docx"
 
 # Configuration
 CONFIG_FILENAME: Final = "config.json"
-LOG_FILENAME: Final = "shiftprint.log"
+LOG_FILENAME: Final = "shiftpress.log"
 
 # UI Constants
 WINDOW_WIDTH: Final = 1040
@@ -144,36 +144,36 @@ class Colors:
 FontSpec = Union[tuple[str, int], tuple[str, int, str]]
 
 
-def _font_family() -> str:
-    """Return a platform-appropriate font family name.
+def _font_families() -> tuple[str, str]:
+    """Return platform-appropriate body and display font families.
 
     Returns:
-        Font family name string suitable for the current OS.
+        Tuple containing body-copy and heading font family names.
     """
     import sys
 
     if sys.platform == "darwin":
-        return "SF Pro Text"
+        return "SF Pro Text", "SF Pro Display"
     if sys.platform.startswith("linux"):
-        return "Ubuntu"
-    # Windows — prefer the variable font (Windows 11+); Tkinter silently
-    # falls back to "Segoe UI" (Windows 7+) if the variable font is absent.
-    return "Segoe UI Variable Display"
+        return "Ubuntu", "Ubuntu"
+    # Windows — use the optical role intended for each size. Tkinter silently
+    # falls back to Segoe UI when the variable families are unavailable.
+    return "Segoe UI Variable Text", "Segoe UI Variable Display"
 
 
-_FONT_FAMILY: Final = _font_family()
+_BODY_FONT_FAMILY, _DISPLAY_FONT_FAMILY = _font_families()
 
 
 @dataclass(frozen=True)
 class Fonts:
     """Font configuration for the application UI."""
 
-    main: FontSpec = (_FONT_FAMILY, 11)
-    bold: FontSpec = (_FONT_FAMILY, 11, "bold")
-    header: FontSpec = (_FONT_FAMILY, 24, "bold")
-    card_title: FontSpec = (_FONT_FAMILY, 13, "bold")
-    sub: FontSpec = (_FONT_FAMILY, 10)
-    button: FontSpec = (_FONT_FAMILY, 14, "bold")
+    main: FontSpec = (_BODY_FONT_FAMILY, 11)
+    bold: FontSpec = (_BODY_FONT_FAMILY, 11, "bold")
+    header: FontSpec = (_DISPLAY_FONT_FAMILY, 24, "bold")
+    card_title: FontSpec = (_DISPLAY_FONT_FAMILY, 13, "bold")
+    sub: FontSpec = (_BODY_FONT_FAMILY, 10)
+    button: FontSpec = (_BODY_FONT_FAMILY, 14, "bold")
 
 
 # Global color and font instances

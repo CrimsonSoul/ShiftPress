@@ -78,7 +78,7 @@ function validateConfiguration(env) {
   return { mainPush, serverUrl };
 }
 
-// ShiftPrint is a pip project, so Snyk is invoked directly rather than through
+// ShiftPress is a pip project, so Snyk is invoked directly rather than through
 // npm scripts. requirements-dev.txt is the scan target because it includes the
 // runtime requirements and the build tooling that PyInstaller packages.
 const SEVERITY_THRESHOLD = 'high';

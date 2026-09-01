@@ -138,7 +138,7 @@ jobs:
           --icon=icon.ico
           --add-data "icon.ico;."
           --add-data "icon.png;."
-          --name "ShiftPrint"
+          --name "ShiftPress"
           main.py
 
       # Tier 2 trial: confirm the packaged GUI survives startup on a runner
@@ -146,10 +146,10 @@ jobs:
       - name: Smoke the built exe
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath "dist\ShiftPrint.exe" -PassThru
+          $p = Start-Process -FilePath "dist\ShiftPress.exe" -PassThru
           Start-Sleep -Seconds 20
           if ($p.HasExited) {
-            Write-Host "::error::ShiftPrint.exe exited during startup with code $($p.ExitCode)"
+            Write-Host "::error::ShiftPress.exe exited during startup with code $($p.ExitCode)"
             exit 1
           }
           Stop-Process -Id $p.Id -Force
@@ -160,14 +160,13 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: ShiftPrint-v${{ steps.version.outputs.value }}-${{ steps.version.outputs.sha }}
+          name: ShiftPress-v${{ steps.version.outputs.value }}-${{ steps.version.outputs.sha }}
           path: dist/*.exe
           retention-days: ${{ steps.version.outputs.retention }}
 
-      # Only ever on an explicit dispatch with the box ticked. On a push event
-      # `inputs` is undefined, so this is pinned to the event as well as the flag.
+      # Only ever on an explicit main-branch dispatch with the box ticked.
       - name: Create Release
-        if: github.event_name == 'workflow_dispatch' && inputs.create_release
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.create_release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           tag_name: v${{ steps.version.outputs.value }}

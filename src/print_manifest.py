@@ -1,4 +1,4 @@
-"""Pure print-selection and manifest construction for ShiftPrint."""
+"""Pure print-selection and manifest construction for ShiftPress."""
 
 from dataclasses import dataclass
 from datetime import date

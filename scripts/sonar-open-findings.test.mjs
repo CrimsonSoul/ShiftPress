@@ -24,10 +24,10 @@ function response(body, { ok = true, status = 200 } = {}) {
 
 test('parses one exact sonar.projectKey from the project properties', () => {
   assert.equal(
-    parseProjectKey('sonar.projectName=ShiftPrint\nsonar.projectKey=CrimsonSoul_ShiftPrint\n'),
+    parseProjectKey('sonar.projectName=ShiftPress\nsonar.projectKey=CrimsonSoul_ShiftPrint\n'),
     'CrimsonSoul_ShiftPrint',
   );
-  assert.throws(() => parseProjectKey('sonar.projectName=ShiftPrint\n'), /sonar\.projectKey/);
+  assert.throws(() => parseProjectKey('sonar.projectName=ShiftPress\n'), /sonar\.projectKey/);
   assert.throws(
     () => parseProjectKey('sonar.projectKey=one\nsonar.projectKey=two\n'),
     /exactly one/,

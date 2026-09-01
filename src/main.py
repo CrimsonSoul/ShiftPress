@@ -1,5 +1,5 @@
 """
-ShiftPrint - Main Application Entry Point
+ShiftPress - Main Application Entry Point
 
 Batch print shift schedules via Word COM automation.
 """
@@ -8,7 +8,7 @@ import threading
 import csv
 from dataclasses import dataclass, replace
 from datetime import date, datetime
-from typing import Optional, Callable, TypedDict
+from typing import Optional, Callable, Literal, TypedDict
 
 import tkinter as tk
 
@@ -65,7 +65,15 @@ class _BatchRequest:
     night_folder: str
 
 
-class ShiftPrintApp:
+def _batch_stop_status(completed_jobs: int, total_jobs: int) -> str:
+    """Describe how far a batch progressed before an unexpected stop."""
+    if completed_jobs == 0:
+        return "Printing stopped before any schedules were completed"
+    schedule_noun = "schedule" if total_jobs == 1 else "schedules"
+    return f"Printing stopped after {completed_jobs} of {total_jobs} {schedule_noun}"
+
+
+class ShiftPressApp:
     """Main application controller.
 
     Coordinates configuration management, input validation, preflight
@@ -102,7 +110,7 @@ class ShiftPrintApp:
         # Handle window close gracefully
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        logger.info("ShiftPrint application initialized")
+        logger.info("ShiftPress application initialized")
 
     def _safe_after(self, callback: Callable[[], None]) -> None:
         """Schedule a UI callback if the window is still alive.
@@ -135,25 +143,32 @@ class ShiftPrintApp:
                 self.ui.printer_var.set(config.printer_name)
             self.ui.refresh_setup_summary()
             logger.info("Configuration loaded successfully")
-        except Exception as e:
+        except Exception:
             logger.exception("Error loading configuration")
             self.ui.show_warning(
-                "Configuration Error", f"Could not load saved configuration: {e}"
+                "Setup could not be loaded",
+                "Open Setup, confirm both template folders and the printer, then "
+                "select Apply. No schedules have been sent to print.",
             )
 
-    def _save_config(self, config: AppConfig) -> None:
+    def _save_config(self, config: AppConfig) -> bool:
         """
         Save configuration (thread-safe).
 
         Args:
             config: Configuration to save
+
+        Returns:
+            ``True`` when the configuration was persisted, otherwise ``False``.
         """
         with self._save_lock:
             try:
                 self.config_manager.save(config)
                 logger.info("Configuration saved successfully")
+                return True
             except Exception:
                 logger.exception("Error saving configuration")
+                return False
 
     @staticmethod
     def _normalize_folder(folder: str) -> str:
@@ -313,13 +328,18 @@ class ShiftPrintApp:
             return
 
         # Validate inputs
+        self.ui.update_status("Checking setup and templates…", 0, level="info")
+        self.root.update_idletasks()
         request, error_msg = self._validate_inputs()
         if request is None:
+            self.ui.update_status(
+                f"Cannot print: {error_msg or 'Unknown error'}", 0, level="error"
+            )
             self.ui.show_warning("Validation Error", error_msg or "Unknown error")
             return
 
         if not self._confirm_large_batch(request.manifest):
-            self.ui.update_status("Cancelled by user", 0)
+            self.ui.update_status("Cancelled before printing", 0, level="info")
             return
 
         # Reset cancel flag
@@ -343,7 +363,9 @@ class ShiftPrintApp:
             return False
         self._cancel_event.set()
         current_progress = self.ui.progress_var.get() if self.ui.progress_var else 0.0
-        self.ui.update_status("Stopping after current document...", current_progress)
+        self.ui.update_status(
+            "Stopping after current document...", current_progress, level="info"
+        )
         self.ui.set_print_button_state("disabled")
         return True
 
@@ -383,9 +405,17 @@ class ShiftPrintApp:
         """Cancel the current batch if one is active (Escape key handler)."""
         self._request_cancel()
 
-    def _cancel_ui_update(self) -> None:
+    def _cancel_ui_update(self, completed_jobs: int, total_jobs: int) -> None:
         """Schedule a 'Cancelled' status update on the UI thread."""
-        self._safe_after(lambda: self.ui.update_status("Cancelled", 0))
+        progress = (completed_jobs / max(total_jobs, 1)) * PROGRESS_MAX
+        noun = "schedule" if total_jobs == 1 else "schedules"
+        self._safe_after(
+            lambda: self.ui.update_status(
+                f"Cancelled after {completed_jobs} of {total_jobs} {noun}",
+                progress,
+                level="info",
+            )
+        )
 
     def _reset_ui(self) -> None:
         """Re-enable all inputs and reset the print button to its default state."""
@@ -403,7 +433,7 @@ class ShiftPrintApp:
         job_index: int,
         total_jobs: int,
         failed_operations: list[FailedOperation],
-    ) -> None:
+    ) -> bool:
         """Print one concrete manifest job and record failures.
 
         Args:
@@ -417,7 +447,7 @@ class ShiftPrintApp:
         shift_label = job.shift_type.title()
         day_name = get_english_day_name(job.date)
         display_date = job.date.strftime(_DISPLAY_DATE_FORMAT)
-        progress = ((job_index + 1) / max(total_jobs, 1)) * 100
+        progress = (job_index / max(total_jobs, 1)) * PROGRESS_MAX
         msg = (
             f"Printing {shift_label} Shift: {day_name} {display_date} "
             f"({job_index + 1}/{total_jobs})..."
@@ -446,6 +476,84 @@ class ShiftPrintApp:
             logger.error(
                 f"Failed to print {job.shift_type} shift for {job.date}: {error}"
             )
+        completed_progress = ((job_index + 1) / max(total_jobs, 1)) * PROGRESS_MAX
+        completion_message = (
+            f"Finished {shift_label} Shift: {day_name} {display_date} "
+            f"({job_index + 1}/{total_jobs})"
+        )
+        level: Literal["info", "error"] = "info" if success else "error"
+        self._safe_after(
+            lambda: self.ui.update_status(
+                completion_message, completed_progress, level=level
+            )
+        )
+        return success
+
+    def _persist_batch_config(self, request: _BatchRequest) -> None:
+        """Persist the validated setup without preventing the current run."""
+        config = AppConfig(
+            day_folder=request.day_folder,
+            night_folder=request.night_folder,
+            printer_name=request.printer_name,
+        )
+        if not self._save_config(config):
+            self._safe_after(
+                lambda: self.ui.show_warning(
+                    "Setup was not saved",
+                    "This print run can continue, but these folders and printer may "
+                    "not be restored next time. If this repeats, select Open logs "
+                    "and contact support.",
+                )
+            )
+
+    def _show_batch_outcome(
+        self,
+        total_jobs: int,
+        failed_operations: list[FailedOperation],
+    ) -> None:
+        """Report a completed batch, including any individual print failures."""
+        if failed_operations:
+            failure_count = len(failed_operations)
+            failure_noun = "schedule" if failure_count == 1 else "schedules"
+            self._safe_after(
+                lambda: self.ui.update_status(
+                    f"Completed with {failure_count} failed {failure_noun}",
+                    PROGRESS_MAX,
+                    level="error",
+                )
+            )
+            report_path = self._write_failure_report(failed_operations)
+            snapshot = list(failed_operations)
+            self._safe_after(lambda: self._show_failure_summary(snapshot, report_path))
+            return
+
+        schedule_noun = "schedule" if total_jobs == 1 else "schedules"
+        self._safe_after(
+            lambda: self.ui.update_status(
+                f"All {total_jobs} {schedule_noun} sent to printer",
+                PROGRESS_MAX,
+                level="success",
+            )
+        )
+        self._safe_after(
+            lambda: self.ui.show_info(
+                "Success",
+                f"All {total_jobs} {schedule_noun} were sent to the printer.",
+            )
+        )
+
+    def _show_batch_error(self, completed_jobs: int, total_jobs: int) -> None:
+        """Report an unexpected batch failure with preserved progress."""
+        progress = (completed_jobs / max(total_jobs, 1)) * PROGRESS_MAX
+        status = _batch_stop_status(completed_jobs, total_jobs)
+        self._safe_after(lambda: self.ui.update_status(status, progress, level="error"))
+        self._safe_after(
+            lambda: self.ui.show_error(
+                "Printing stopped",
+                "Review the selected printer and template folders, then try again. "
+                "If the problem repeats, select Open logs and contact support.",
+            )
+        )
 
     def _process_batch(self, request: _BatchRequest) -> None:
         """Process exactly the concrete jobs in a validated request.
@@ -459,15 +567,10 @@ class ShiftPrintApp:
             self._safe_after(self._reset_ui)
             return
 
-        config = AppConfig(
-            day_folder=request.day_folder,
-            night_folder=request.night_folder,
-            printer_name=request.printer_name,
-        )
-        self._save_config(config)
-
+        self._persist_batch_config(request)
         logger.info(f"Processing {total_jobs} selected schedules")
         failed_operations: list[FailedOperation] = []
+        completed_jobs = 0
 
         try:
             wp = self._preflight_wp or WordProcessor()
@@ -479,7 +582,7 @@ class ShiftPrintApp:
                 for job_index, job in enumerate(request.manifest):
                     if self._cancel_event.is_set():
                         logger.info("Batch processing cancelled by user")
-                        self._cancel_ui_update()
+                        self._cancel_ui_update(completed_jobs, total_jobs)
                         return
 
                     self._print_job(
@@ -490,30 +593,13 @@ class ShiftPrintApp:
                         total_jobs,
                         failed_operations,
                     )
+                    completed_jobs += 1
 
-                self._safe_after(
-                    lambda: self.ui.update_status("Complete!", PROGRESS_MAX)
-                )
+                self._show_batch_outcome(total_jobs, failed_operations)
 
-                if failed_operations:
-                    report_path = self._write_failure_report(failed_operations)
-                    snapshot = list(failed_operations)
-                    self._safe_after(
-                        lambda: self._show_failure_summary(snapshot, report_path)
-                    )
-                else:
-                    self._safe_after(
-                        lambda: self.ui.show_info(
-                            "Success",
-                            f"All {total_jobs} selected schedules have been "
-                            "processed and sent to the printer.",
-                        )
-                    )
-
-        except Exception as e:
+        except Exception:
             logger.exception("Error during batch processing")
-            err_msg = f"An error occurred during processing: {type(e).__name__}: {e}"
-            self._safe_after(lambda: self.ui.show_error("Processing Error", err_msg))
+            self._show_batch_error(completed_jobs, total_jobs)
         finally:
             self._safe_after(self._reset_ui)
 
@@ -545,7 +631,12 @@ class ShiftPrintApp:
                 night_folder=(self.ui.get_night_folder() or "").strip(),
                 printer_name=printer,
             )
-            self._save_config(config)
+            if not self._save_config(config):
+                self.ui.show_warning(
+                    "Setup was not saved",
+                    "These folders and printer may not be restored next time. Review "
+                    "the application logs if this repeats.",
+                )
         except Exception as e:
             logger.warning(f"Could not save config on close: {e}")
 
@@ -626,13 +717,13 @@ class ShiftPrintApp:
 def main() -> None:
     """Main entry point for the application."""
     setup_logging()
-    logger.info("Starting ShiftPrint")
+    logger.info("Starting ShiftPress")
 
     try:
         root = tk.Tk()
-        app = ShiftPrintApp(root)
+        app = ShiftPressApp(root)
         app.ui.run()
-    except Exception as e:
+    except Exception:
         logger.exception("Fatal error in main")
         try:
             import tkinter.messagebox as mb
@@ -641,14 +732,15 @@ def main() -> None:
             log_path = data_dir / LOG_FILENAME
             mb.showerror(
                 "Fatal Error",
-                "The application encountered a fatal error:\n\n"
-                f"{str(e)}\n\n"
+                "ShiftPress could not start. Close Microsoft Word, then reopen "
+                "ShiftPress. If the problem repeats, contact support and share "
+                "the log file.\n\n"
                 f"Logs are saved to:\n{log_path}",
             )
         except Exception:
-            print(f"Fatal error: {e}")
+            print("ShiftPress could not start. Review the application log for details.")
     finally:
-        logger.info("ShiftPrint shutting down")
+        logger.info("ShiftPress shutting down")
 
 
 if __name__ == "__main__":

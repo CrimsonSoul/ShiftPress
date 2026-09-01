@@ -1,5 +1,5 @@
 """
-Word document processing for ShiftPrint application.
+Word document processing for ShiftPress application.
 
 This module handles all interactions with Microsoft Word via COM automation,
 including document opening, date replacement, and printing.
@@ -102,26 +102,14 @@ class WordProcessor:
                 self.word_app.Visible = False
                 self.word_app.DisplayAlerts = 0
 
-                # Best-effort hardening: disable macro execution for automated opens.
+                # Disable macro execution before any automated document opens.
                 # msoAutomationSecurityForceDisable = 3
-                try:
-                    self.word_app.AutomationSecurity = 3
-                except Exception as e:
-                    logger.debug(f"Could not set Word AutomationSecurity: {e}")
+                self.word_app.AutomationSecurity = 3
             self._initialized = True
             logger.info("Word application initialized")
         except Exception as e:
             logger.exception("Failed to initialize Word application")
-            # If COM was initialized in this thread, uninitialize to avoid leaking.
-            if self._com_initialized:
-                try:
-                    pythoncom.CoUninitialize()
-                except Exception as uninit_e:
-                    logger.debug(
-                        f"Error in CoUninitialize after init failure: {uninit_e}"
-                    )
-                finally:
-                    self._com_initialized = False
+            self.shutdown()
             raise RuntimeError(f"Could not initialize Word: {e}") from e
 
     @staticmethod
@@ -452,8 +440,13 @@ class WordProcessor:
                     f"Document is protected and could not be unprotected: {template_name}",
                 )
 
-            # Replace dates
-            self.replace_dates(doc, current_date)
+            # Replace dates. Printing an unchanged schedule is unsafe because
+            # the document can look valid while carrying the wrong date.
+            replacement_count = self.replace_dates(doc, current_date)
+            if replacement_count == 0:
+                raise RuntimeError(
+                    "No supported date text was found; document was not printed"
+                )
 
             # Set printer and print
             self._set_active_printer(printer_name)
@@ -494,21 +487,27 @@ class WordProcessor:
         return bool(doc.ProtectionType == PROTECTION_NONE)
 
     def _set_active_printer(self, printer_name: str) -> None:
-        """Best-effort selection of the configured Word printer."""
+        """Select the configured Word printer or fail before printing."""
         if not self.word_app:
-            return
+            raise RuntimeError("Word processor not initialized")
         try:
             self.word_app.ActivePrinter = printer_name
-        except Exception:
+        except Exception as error:
             logger.exception("Could not set ActivePrinter to '%s'", printer_name)
+            raise RuntimeError(
+                f"Could not select printer '{printer_name}': {error}"
+            ) from error
 
-    def replace_dates(self, doc: Any, current_date: date) -> None:
+    def replace_dates(self, doc: Any, current_date: date) -> int:
         """
         Replace date placeholders in the document using regex patterns.
 
         Args:
             doc: The Word document object
             current_date: The date to use for replacements
+
+        Returns:
+            Number of supported date patterns that matched.
         """
         # Normalize non-breaking spaces before running patterns
         self._normalize_spaces_in_doc(doc)
@@ -573,12 +572,12 @@ class WordProcessor:
             ),
         ]
 
-        any_matched = False
+        matched_patterns = 0
         for find_text, replace_text in patterns:
             if self._execute_replace(doc, find_text, replace_text):
-                any_matched = True
+                matched_patterns += 1
 
-        if not any_matched:
+        if matched_patterns == 0:
             # Dump the first ~200 chars of the document body so the log shows
             # exactly what text Word sees (including any invisible characters).
             sample = ""
@@ -594,6 +593,7 @@ class WordProcessor:
             )
 
         logger.debug(f"Date replacements completed for {current_date}")
+        return matched_patterns
 
     def _normalize_spaces_in_doc(self, doc: Any) -> None:
         """Normalize invisible characters that break wildcard matching.

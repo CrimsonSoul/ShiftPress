@@ -7,9 +7,10 @@ path before release.
 
 ## Preparation
 
-1. Install dependencies and launch ShiftPrint with `start_app.bat`.
-2. Open **Setup → Change…**, choose both template folders and the test printer,
-   then select **Done**.
+1. Install dependencies and launch ShiftPress with `start_app.bat`.
+2. Select **Setup…**, choose both template folders and the test printer, then
+   select **Apply**. Reopen Setup, make a harmless change, select **Cancel**, and
+   confirm the prior value is restored.
 3. Confirm the collapsed Setup card says **Templates configured** and names the
    selected printer without exposing either folder path.
 4. Use dates that have known Day and Night templates. Keep the printed pages for
@@ -17,7 +18,7 @@ path before release.
 
 ## Required Runs
 
-For every run, compare the numbered **This run** manifest with both Word activity
+For every run, compare the numbered **Print scope** manifest with both Word activity
 and the physical printer output.
 
 | Run | Night selection | Day selection | Expected result |
@@ -53,7 +54,7 @@ all four runs and the state and safety checks pass on Windows.
 The README has no screenshot. Capture one here, where a real Windows instance
 with Microsoft Word exists:
 
-1. Launch ShiftPrint with both template folders configured and a printer
+1. Launch ShiftPress with both template folders configured and a printer
    selected.
 2. Capture the main window to `docs/screenshots/main.png`.
 3. Restore the README `## Preview` section above `## Core Features`:

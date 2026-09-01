@@ -1,13 +1,16 @@
 """
-UI components for ShiftPrint application.
+UI components for ShiftPress application.
 
 This module contains all Tkinter UI components and styling.
 """
 
 import os
+import re
 import sys
+import ctypes
 import subprocess
 import tkinter as tk
+from ctypes import wintypes
 from dataclasses import dataclass
 from tkinter import messagebox, filedialog, ttk
 from datetime import date, timedelta
@@ -49,6 +52,11 @@ from .print_manifest import (
 
 logger = get_logger(__name__)
 
+_SPI_GETWORKAREA = 0x0030
+_FALLBACK_SYSTEM_UI_RESERVE = 40
+_WINDOW_FRAME_WIDTH_RESERVE = 16
+_WINDOW_FRAME_HEIGHT_RESERVE = 40
+
 # Imported lazily to avoid circular dependency; only used for version display.
 _APP_VERSION: Optional[str] = None
 
@@ -64,13 +72,89 @@ _STYLE_PRIMARY_BUTTON = "Primary.TButton"
 _STYLE_DANGER_BUTTON = "Danger.TButton"
 _STYLE_HEADER_LABEL = "Header.TLabel"
 _STYLE_SUB_LABEL = "Sub.TLabel"
-_STYLE_COUNT_READY_LABEL = "CountReady.TLabel"
+_STYLE_COUNT_SELECTED_LABEL = "CountSelected.TLabel"
 _STYLE_SUCCESS_LABEL = "Success.TLabel"
 _STYLE_ERROR_LABEL = "Error.TLabel"
 _STYLE_CARD_CHECKBUTTON = "Card.TCheckbutton"
 _STYLE_CARD_RADIOBUTTON = "Card.TRadiobutton"
 _DATE_ENTRY_SELECTED_EVENT = "<<DateEntrySelected>>"
 _DATE_PATTERN = "mm/dd/yyyy"
+_FOCUS_IN_EVENT = "<FocusIn>"
+_CONFIGURE_EVENT = "<Configure>"
+_PRINT_BUTTON_LABEL = "Print schedules"
+
+
+def _status_style(
+    message: str,
+    level: Optional[Literal["info", "success", "error"]],
+) -> str:
+    """Return the visual style for an explicit or inferred status level."""
+    if level == "success":
+        return _STYLE_SUCCESS_LABEL
+    if level == "error":
+        return _STYLE_ERROR_LABEL
+    if level is not None:
+        return _STYLE_SUB_LABEL
+
+    message_lower = message.lower()
+    if "complete" in message_lower:
+        return _STYLE_SUCCESS_LABEL
+    if any(token in message_lower for token in ("cancel", "error", "fail")):
+        return _STYLE_ERROR_LABEL
+    return _STYLE_SUB_LABEL
+
+
+def _manifest_blocker(
+    selections: tuple[ShiftSelection, ShiftSelection],
+    invalid: tuple[ShiftSelection, ...],
+    manifest: tuple[Any, ...],
+    printer_label: str,
+) -> Optional[str]:
+    """Return the first local condition that must block the Print action."""
+    if invalid:
+        names = " and ".join(selection.shift_type.title() for selection in invalid)
+        return f"Fix {names} date selection"
+    if not manifest:
+        return "Select at least one Night or Day schedule"
+
+    missing_folder = next(
+        (
+            selection
+            for selection in selections
+            if selection.enabled and not selection.folder.strip()
+        ),
+        None,
+    )
+    if missing_folder is not None:
+        return f"Choose {missing_folder.shift_type.title()} Templates in Setup"
+    if printer_label == "Choose a printer":
+        return "Choose a printer in Setup"
+    return None
+
+
+def _get_work_area(window: tk.Misc) -> tuple[int, int, int, int]:
+    """Return usable screen bounds, excluding the Windows taskbar when possible."""
+    screen_width = window.winfo_screenwidth()
+    screen_height = window.winfo_screenheight()
+
+    if sys.platform == "win32":
+        try:
+            rect = wintypes.RECT()
+            user32 = getattr(ctypes, "windll").user32
+            if user32.SystemParametersInfoW(_SPI_GETWORKAREA, 0, ctypes.byref(rect), 0):
+                if rect.right > rect.left and rect.bottom > rect.top:
+                    return rect.left, rect.top, rect.right, rect.bottom
+        except (AttributeError, OSError):
+            logger.debug("Could not query the Windows work area", exc_info=True)
+
+    # Tk exposes the full display rather than platform-reserved areas on some
+    # systems. Preserve a small taskbar/dock allowance in that fallback path.
+    return (
+        0,
+        0,
+        screen_width,
+        max(AUTO_RESIZE_MIN_HEIGHT, screen_height - _FALLBACK_SYSTEM_UI_RESERVE),
+    )
 
 
 @dataclass
@@ -108,76 +192,6 @@ def _get_version() -> str:
     return _APP_VERSION
 
 
-class _ToolTip:
-    """Lightweight hover tooltip for any Tkinter widget."""
-
-    def __init__(self, widget: Any, text: str, delay: int = 400) -> None:
-        """Create a tooltip that appears on hover.
-
-        Args:
-            widget: The Tkinter widget to attach the tooltip to.
-            text: Tooltip text to display.
-            delay: Delay in milliseconds before showing the tooltip.
-        """
-        self._widget = widget
-        self._text = text
-        self._delay = delay
-        self._tip_window: Optional[tk.Toplevel] = None
-        self._after_id: Optional[str] = None
-        widget.bind("<Enter>", self._schedule, add="+")
-        widget.bind("<Leave>", self._hide, add="+")
-        widget.bind("<ButtonPress>", self._hide, add="+")
-        widget.bind("<Destroy>", self._on_destroy, add="+")
-
-    def _schedule(self, _event: Any = None) -> None:
-        self._cancel()
-        self._after_id = self._widget.after(self._delay, self._show)
-
-    def _on_destroy(self, _event: Any = None) -> None:
-        self._cancel()
-        self._hide()
-
-    def _show(self) -> None:
-        if self._tip_window:
-            return
-        try:
-            x = self._widget.winfo_rootx() + 20
-            y = self._widget.winfo_rooty() + self._widget.winfo_height() + 4
-        except Exception as e:
-            logger.debug(f"Tooltip geometry lookup failed: {e}")
-            return
-        try:
-            tw = tk.Toplevel(self._widget)
-        except tk.TclError:
-            return
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry(f"+{x}+{y}")
-        label = tk.Label(
-            tw,
-            text=self._text,
-            background=COLORS.surface,
-            foreground=COLORS.text_main,
-            relief="solid",
-            borderwidth=1,
-            font=FONTS.sub,
-            padx=6,
-            pady=4,
-        )
-        label.pack()
-        self._tip_window = tw
-
-    def _hide(self, _event: Any = None) -> None:
-        self._cancel()
-        if self._tip_window:
-            self._tip_window.destroy()
-            self._tip_window = None
-
-    def _cancel(self) -> None:
-        if self._after_id:
-            self._widget.after_cancel(self._after_id)
-            self._after_id = None
-
-
 def _setup_placeholder(entry: ttk.Entry, placeholder: str) -> None:
     """Attach placeholder text behaviour to a ttk.Entry.
 
@@ -195,14 +209,14 @@ def _setup_placeholder(entry: ttk.Entry, placeholder: str) -> None:
             entry.delete(0, tk.END)
             entry.config(foreground=COLORS.text_main)
 
-    entry.bind("<FocusIn>", _hide, add="+")
+    entry.bind(_FOCUS_IN_EVENT, _hide, add="+")
     entry.bind("<FocusOut>", _show, add="+")
     # Show placeholder initially if entry is empty.
     _show()
 
 
 class ScheduleAppUI:
-    """Main UI class for the ShiftPrint application."""
+    """Main UI class for the ShiftPress application."""
 
     def __init__(self, root: tk.Tk, today: Optional[date] = None):
         """
@@ -213,11 +227,12 @@ class ScheduleAppUI:
             today: Optional deterministic date used for launch defaults.
         """
         self.root = root
-        self.root.title("ShiftPrint")
+        self.root.title("ShiftPress")
         self.root.resizable(WINDOW_RESIZABLE, WINDOW_RESIZABLE)
         self.root.configure(bg=COLORS.background)
         self._today = today or date.today()
         self._inputs_enabled = True
+        self._dependency_error: Optional[str] = None
 
         # Apply window icon if available.
         self._apply_icon()
@@ -234,17 +249,29 @@ class ScheduleAppUI:
         self.setup_summary_label: Optional[ttk.Label] = None
         self._setup_details: Optional[ttk.Frame] = None
         self._setup_dialog: Optional[tk.Toplevel] = None
+        self._setup_canvas: Optional[tk.Canvas] = None
+        self._setup_content: Optional[ttk.Frame] = None
+        self._setup_content_window: Optional[int] = None
+        self._setup_scrollbar: Optional[ttk.Scrollbar] = None
+        self._setup_snapshot: Optional[tuple[str, str, str]] = None
         self._setup_toggle_btn: Optional[ttk.Button] = None
         self._manifest_card: Optional[ttk.Frame] = None
         self._footer_frame: Optional[ttk.Frame] = None
+        self._logs_btn: Optional[ttk.Button] = None
+        self._main_canvas: Optional[tk.Canvas] = None
+        self._main_content: Optional[ttk.Frame] = None
+        self._main_content_window: Optional[int] = None
+        self._main_scrollbar: Optional[ttk.Scrollbar] = None
         self.manifest_title_label: Optional[ttk.Label] = None
         self.manifest_label: Optional[ttk.Label] = None
         self.status_label: Optional[ttk.Label] = None
         self.progress_var: Optional[tk.DoubleVar] = None
         self.progress: Optional[ttk.Progressbar] = None
+        self._progress_row: Optional[ttk.Frame] = None
         self._progress_pct: Optional[ttk.Label] = None
         self.printer_dropdown: Optional[ttk.OptionMenu] = None
         self._refresh_btn: Optional[ttk.Button] = None
+        self._printer_status_label: Optional[ttk.Label] = None
         self.print_btn: Optional[ttk.Button] = None
         self._browse_buttons: list[ttk.Button] = []
         self._shift_panels: dict[ShiftType, _ShiftPanelWidgets] = {}
@@ -305,7 +332,7 @@ class ScheduleAppUI:
         self.style.configure(
             "SetupTitle.TLabel",
             background=COLORS.background,
-            foreground=COLORS.accent,
+            foreground=COLORS.text_main,
             font=FONTS.card_title,
         )
         self.style.configure(
@@ -330,7 +357,7 @@ class ScheduleAppUI:
             fieldbackground=COLORS.input,
             foreground=COLORS.text_main,
             insertcolor=COLORS.text_main,
-            selectbackground=COLORS.accent,
+            selectbackground=COLORS.action,
             selectforeground=COLORS.text_main,
             bordercolor=COLORS.border,
             borderwidth=1,
@@ -405,7 +432,7 @@ class ScheduleAppUI:
             _STYLE_PRIMARY_BUTTON,
             background=COLORS.action,
             foreground=COLORS.text_main,
-            bordercolor=COLORS.day_accent,
+            bordercolor=COLORS.action,
             borderwidth=1,
             font=FONTS.button,
             padding=(26, 16),
@@ -473,7 +500,7 @@ class ScheduleAppUI:
         # Semantic readiness states.  Colour reinforces the label text; it is
         # never the only signal, per the DESIGN.md validation-state rule.
         for count_style, count_color in (
-            (_STYLE_COUNT_READY_LABEL, COLORS.success),
+            (_STYLE_COUNT_SELECTED_LABEL, COLORS.text_main),
             ("CountMuted.TLabel", COLORS.text_dim),
             ("CountError.TLabel", COLORS.error),
         ):
@@ -566,6 +593,29 @@ class ScheduleAppUI:
             foreground=[("disabled", COLORS.text_dim)],
         )
 
+        # Clam otherwise relies on subtle platform defaults for keyboard focus.
+        for style_name in (
+            "TButton",
+            "TEntry",
+            "TCombobox",
+            "TMenubutton",
+            "TCheckbutton",
+            "TRadiobutton",
+            _STYLE_CARD_CHECKBUTTON,
+            _STYLE_CARD_RADIOBUTTON,
+        ):
+            self.style.configure(
+                style_name,
+                focuscolor=COLORS.night_accent,
+                focusthickness=2,
+            )
+            self.style.map(
+                style_name,
+                bordercolor=[("focus", COLORS.night_accent)],
+                lightcolor=[("focus", COLORS.night_accent)],
+                darkcolor=[("focus", COLORS.night_accent)],
+            )
+
     def _apply_icon(self) -> None:
         """Set the window icon from the bundled icon file, if present."""
         try:
@@ -586,15 +636,14 @@ class ScheduleAppUI:
             logger.debug(f"Could not set window icon: {e}")
 
     def _center_window(self) -> None:
-        """Center the window on the primary monitor."""
+        """Center the window inside the taskbar-safe primary work area."""
         try:
             self.root.update_idletasks()
             w = self.root.winfo_width()
             h = self.root.winfo_height()
-            scr_w = self.root.winfo_screenwidth()
-            scr_h = self.root.winfo_screenheight()
-            x = max(0, (scr_w - w) // 2)
-            y = max(0, (scr_h - h) // 2)
+            left, top, right, bottom = _get_work_area(self.root)
+            x = left + max(0, (right - left - w - _WINDOW_FRAME_WIDTH_RESERVE) // 2)
+            y = top + max(0, (bottom - top - h - _WINDOW_FRAME_HEIGHT_RESERVE) // 2)
             self.root.geometry(f"{w}x{h}+{x}+{y}")
         except Exception as e:
             logger.debug(f"Could not center window: {e}")
@@ -645,6 +694,25 @@ class ScheduleAppUI:
                 self.printer_var.set(DEFAULT_PRINTER_LABEL)
         except Exception:
             logger.exception("Could not update printer dropdown")
+        self._update_printer_status(printers)
+        self.refresh_setup_summary()
+        self.refresh_manifest_preview()
+
+    def _update_printer_status(self, printers: list[str]) -> None:
+        """Show the result of the latest printer enumeration."""
+        if self._printer_status_label is None:
+            return
+        count = len(printers)
+        if count:
+            noun = "printer" if count == 1 else "printers"
+            self._printer_status_label.config(
+                text=f"{count} {noun} available", style=_STYLE_CARD_SUB_LABEL
+            )
+            return
+        message = "No printers found. Check connections, then Refresh."
+        if win32print is None:
+            message = "Printing requires Windows with pywin32 installed."
+        self._printer_status_label.config(text=message, style=_STYLE_ERROR_LABEL)
 
     # ------------------------------------------------------------------
     # Widget creation
@@ -652,15 +720,117 @@ class ScheduleAppUI:
 
     def _create_widgets(self) -> None:
         """Create all UI widgets."""
-        bg_canvas = ttk.Frame(self.root, padding="28")
-        bg_canvas.pack(fill="both", expand=True)
+        viewport = ttk.Frame(self.root)
+        viewport.pack(fill="both", expand=True)
+        self._main_canvas = tk.Canvas(
+            viewport,
+            background=COLORS.background,
+            borderwidth=0,
+            highlightthickness=0,
+        )
+        self._main_scrollbar = ttk.Scrollbar(
+            viewport,
+            orient="vertical",
+            command=self._main_canvas.yview,
+        )
+        self._main_canvas.configure(yscrollcommand=self._main_scrollbar.set)
+        self._main_canvas.pack(side="left", fill="both", expand=True)
+
+        bg_canvas = ttk.Frame(self._main_canvas, padding="28")
+        self._main_content = bg_canvas
+        self._main_content_window = self._main_canvas.create_window(
+            (0, 0), window=bg_canvas, anchor="nw"
+        )
+        bg_canvas.bind(_CONFIGURE_EVENT, self._sync_main_scroll_region)
+        self._main_canvas.bind(_CONFIGURE_EVENT, self._resize_main_content)
+        self.root.bind("<MouseWheel>", self._scroll_main_content, add="+")
+        self.root.bind(_FOCUS_IN_EVENT, self._ensure_focus_visible, add="+")
 
         self._create_header(bg_canvas)
         self._create_setup_card(bg_canvas)
         self._create_shift_selection_row(bg_canvas)
         self._create_manifest_card(bg_canvas)
         self._create_footer(bg_canvas)
+        self.root.bind("<Alt-s>", lambda _event: self._show_setup_dialog())
+        self.root.bind("<Alt-h>", lambda _event: self.show_help())
         self.refresh_manifest_preview()
+
+    def _sync_main_scroll_region(self, _event: Any = None) -> None:
+        """Keep the scroll range aligned with the rendered work surface."""
+        if self._main_canvas is not None:
+            self._main_canvas.configure(scrollregion=self._main_canvas.bbox("all"))
+
+    def _resize_main_content(self, event: Any) -> None:
+        """Match the work surface width to its viewport without clipping height."""
+        if self._main_canvas is None or self._main_content_window is None:
+            return
+        self._main_canvas.itemconfigure(self._main_content_window, width=event.width)
+        if (
+            self._main_content is not None
+            and self._main_content.winfo_reqheight() > event.height
+        ):
+            self._show_main_scrollbar()
+        else:
+            self._hide_main_scrollbar()
+
+    def _show_main_scrollbar(self) -> None:
+        """Expose native overflow navigation on constrained displays."""
+        if self._main_scrollbar is not None:
+            self._main_scrollbar.pack(side="right", fill="y")
+
+    def _hide_main_scrollbar(self) -> None:
+        """Keep the normal work surface free of unnecessary scroll chrome."""
+        if self._main_scrollbar is not None:
+            self._main_scrollbar.pack_forget()
+        if self._main_canvas is not None:
+            self._main_canvas.yview_moveto(0.0)
+
+    def _scroll_main_content(self, event: Any) -> None:
+        """Scroll overflowing content with the standard Windows mouse wheel."""
+        if self._main_canvas is None or self._main_scrollbar is None:
+            return
+        if not self._main_scrollbar.winfo_ismapped():
+            return
+        delta = getattr(event, "delta", 0)
+        if delta:
+            units = int(-delta / 120)
+            if units == 0:
+                units = -1 if delta > 0 else 1
+            self._main_canvas.yview_scroll(units, "units")
+
+    def _ensure_focus_visible(self, event: Any) -> None:
+        """Reveal a focused descendant when keyboard navigation reaches overflow."""
+        if (
+            self._main_canvas is None
+            or self._main_content is None
+            or self._main_scrollbar is None
+            or not self._main_scrollbar.winfo_ismapped()
+        ):
+            return
+        self._ensure_widget_visible(event, self._main_canvas, self._main_content)
+
+    @staticmethod
+    def _ensure_widget_visible(
+        event: Any, canvas: tk.Canvas, content: ttk.Frame
+    ) -> None:
+        """Scroll one canvas just enough to reveal its focused descendant."""
+        widget = getattr(event, "widget", None)
+        try:
+            if widget is None or not str(widget).startswith(str(content)):
+                return
+            content_height = content.winfo_reqheight()
+            viewport_height = canvas.winfo_height()
+            top = widget.winfo_rooty() - content.winfo_rooty()
+            bottom = top + widget.winfo_height()
+            visible_top = canvas.canvasy(0)
+            visible_bottom = visible_top + viewport_height
+            if top < visible_top:
+                canvas.yview_moveto(max(0.0, top / content_height))
+            elif bottom > visible_bottom:
+                target = max(0, bottom - viewport_height)
+                canvas.yview_moveto(min(1.0, target / content_height))
+        except Exception as e:
+            logger.debug(f"Could not reveal focused control: {e}")
 
     def _create_header(self, parent: ttk.Frame) -> None:
         """Create the header section."""
@@ -678,7 +848,7 @@ class ScheduleAppUI:
         if version:
             ttk.Label(
                 title_row,
-                text=f"ShiftPrint  ·  v{version}",
+                text=f"ShiftPress  ·  v{version}",
                 style=_STYLE_SUB_LABEL,
             ).pack(side="right", anchor="s", pady=(0, 5))
 
@@ -733,7 +903,8 @@ class ScheduleAppUI:
         self.setup_summary_label.pack(side="left", anchor="w")
         self._setup_toggle_btn = ttk.Button(
             summary_row,
-            text="Change…",
+            text="Setup…",
+            underline=0,
             command=self._show_setup_dialog,
             width=12,
         )
@@ -747,13 +918,36 @@ class ScheduleAppUI:
         dialog = tk.Toplevel(self.root)
         self._setup_dialog = dialog
         dialog.withdraw()
-        dialog.title("ShiftPrint Setup")
+        dialog.title("ShiftPress Setup")
         dialog.configure(bg=COLORS.background)
-        dialog.resizable(True, False)
-        dialog.protocol("WM_DELETE_WINDOW", self._hide_setup_dialog)
+        dialog.resizable(True, True)
+        dialog.protocol("WM_DELETE_WINDOW", self._cancel_setup_dialog)
+        dialog.bind("<Escape>", lambda _event: self._cancel_setup_dialog())
 
-        canvas = ttk.Frame(dialog, padding="24")
-        canvas.pack(fill="both", expand=True)
+        viewport = ttk.Frame(dialog)
+        viewport.pack(fill="both", expand=True)
+        self._setup_canvas = tk.Canvas(
+            viewport,
+            background=COLORS.background,
+            borderwidth=0,
+            highlightthickness=0,
+        )
+        self._setup_scrollbar = ttk.Scrollbar(
+            viewport,
+            orient="vertical",
+            command=self._setup_canvas.yview,
+        )
+        self._setup_canvas.configure(yscrollcommand=self._setup_scrollbar.set)
+        self._setup_canvas.pack(side="left", fill="both", expand=True)
+        canvas = ttk.Frame(self._setup_canvas, padding="24")
+        self._setup_content = canvas
+        self._setup_content_window = self._setup_canvas.create_window(
+            (0, 0), window=canvas, anchor="nw"
+        )
+        canvas.bind(_CONFIGURE_EVENT, self._sync_setup_scroll_region)
+        self._setup_canvas.bind(_CONFIGURE_EVENT, self._resize_setup_content)
+        dialog.bind("<MouseWheel>", self._scroll_setup_content, add="+")
+        dialog.bind(_FOCUS_IN_EVENT, self._ensure_setup_focus_visible, add="+")
         ttk.Label(canvas, text="Setup", style=_STYLE_HEADER_LABEL).pack(anchor="w")
         ttk.Label(
             canvas,
@@ -768,40 +962,145 @@ class ScheduleAppUI:
         )
         self._setup_details.pack(fill="both", expand=True)
 
-        self.day_entry = self._create_path_row(self._setup_details, "Day Templates", "")
         self.night_entry = self._create_path_row(
             self._setup_details, "Night Templates", ""
         )
+        self.day_entry = self._create_path_row(self._setup_details, "Day Templates", "")
 
         _setup_placeholder(self.day_entry, _PATH_PLACEHOLDER)
         _setup_placeholder(self.night_entry, _PATH_PLACEHOLDER)
         self._create_printer_row(self._setup_details)
+        action_row = ttk.Frame(canvas)
+        action_row.pack(anchor="e", pady=(18, 0))
         ttk.Button(
-            canvas,
-            text="Done",
-            command=self._hide_setup_dialog,
+            action_row,
+            text="Cancel",
+            command=self._cancel_setup_dialog,
             width=14,
-        ).pack(anchor="e", pady=(18, 0))
+        ).pack(side="left", padx=(0, 10))
+        ttk.Button(
+            action_row,
+            text="Apply",
+            command=self._apply_setup_dialog,
+            width=14,
+        ).pack(side="left")
+
+    def _sync_setup_scroll_region(self, _event: Any = None) -> None:
+        """Keep Setup's scroll range aligned with its rendered content."""
+        if self._setup_canvas is not None:
+            self._setup_canvas.configure(scrollregion=self._setup_canvas.bbox("all"))
+
+    def _resize_setup_content(self, event: Any) -> None:
+        """Fit Setup content to its viewport and reveal overflow only when needed."""
+        if self._setup_canvas is None or self._setup_content_window is None:
+            return
+        self._setup_canvas.itemconfigure(self._setup_content_window, width=event.width)
+        if (
+            self._setup_content is not None
+            and self._setup_content.winfo_reqheight() > event.height
+        ):
+            self._show_setup_scrollbar()
+        else:
+            self._hide_setup_scrollbar()
+
+    def _show_setup_scrollbar(self) -> None:
+        """Expose native overflow navigation in a constrained Setup dialog."""
+        if self._setup_scrollbar is not None:
+            self._setup_scrollbar.pack(side="right", fill="y")
+
+    def _hide_setup_scrollbar(self) -> None:
+        """Hide Setup overflow chrome when all controls already fit."""
+        if self._setup_scrollbar is not None:
+            self._setup_scrollbar.pack_forget()
+        if self._setup_canvas is not None:
+            self._setup_canvas.yview_moveto(0.0)
+
+    def _scroll_setup_content(self, event: Any) -> None:
+        """Scroll overflowing Setup content with the standard mouse wheel."""
+        if self._setup_canvas is None or self._setup_scrollbar is None:
+            return
+        if not self._setup_scrollbar.winfo_ismapped():
+            return
+        delta = getattr(event, "delta", 0)
+        if delta:
+            units = int(-delta / 120)
+            if units == 0:
+                units = -1 if delta > 0 else 1
+            self._setup_canvas.yview_scroll(units, "units")
+
+    def _ensure_setup_focus_visible(self, event: Any) -> None:
+        """Reveal the focused Setup control during keyboard navigation."""
+        if (
+            self._setup_canvas is None
+            or self._setup_content is None
+            or self._setup_scrollbar is None
+            or not self._setup_scrollbar.winfo_ismapped()
+        ):
+            return
+        self._ensure_widget_visible(
+            event,
+            self._setup_canvas,
+            self._setup_content,
+        )
 
     def _show_setup_dialog(self) -> None:
         """Show setup without expanding or displacing the print work surface."""
         if self._setup_dialog is None:
             return
         dialog = self._setup_dialog
+        self._setup_snapshot = (
+            self.get_day_folder(),
+            self.get_night_folder(),
+            self.get_printer_name(),
+        )
         dialog.deiconify()
         try:
             dialog.transient(self.root)
             dialog.update_idletasks()
-            width = max(720, dialog.winfo_reqwidth())
-            height = dialog.winfo_reqheight()
-            x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - width) // 2)
-            y = self.root.winfo_rooty() + 48
+            if self._setup_content is None:
+                return
+            req_width = self._setup_content.winfo_reqwidth()
+            req_height = self._setup_content.winfo_reqheight()
+            left, top, right, bottom = _get_work_area(dialog)
+            work_width = right - left
+            work_height = bottom - top
+            usable_width = max(520, work_width - _WINDOW_FRAME_WIDTH_RESERVE)
+            usable_height = max(400, work_height - _WINDOW_FRAME_HEIGHT_RESERVE)
+            width = min(max(720, req_width), usable_width)
+            height = min(max(400, req_height), usable_height)
+            centered_x = self.root.winfo_rootx() + max(
+                0, (self.root.winfo_width() - width) // 2
+            )
+            x = min(max(left, centered_x), max(left, right - width))
+            y = min(max(top, self.root.winfo_rooty() + 48), max(top, bottom - height))
             dialog.geometry(f"{width}x{height}+{x}+{y}")
+            if req_height > height:
+                self._show_setup_scrollbar()
+            else:
+                self._hide_setup_scrollbar()
             dialog.grab_set()
         except Exception as e:
             logger.debug(f"Could not position setup dialog: {e}")
         dialog.lift()
         dialog.focus_force()
+        if self.night_entry is not None:
+            self.night_entry.focus_set()
+
+    def _apply_setup_dialog(self) -> None:
+        """Keep the edited Setup values and return to the work surface."""
+        self._setup_snapshot = None
+        self._hide_setup_dialog()
+
+    def _cancel_setup_dialog(self) -> None:
+        """Restore the values present when Setup opened, then close it."""
+        if self._setup_snapshot is not None:
+            day_folder, night_folder, printer = self._setup_snapshot
+            self.set_day_folder(day_folder)
+            self.set_night_folder(night_folder)
+            if self.printer_var is not None:
+                self.printer_var.set(printer)
+        self._setup_snapshot = None
+        self._hide_setup_dialog()
 
     def _hide_setup_dialog(self) -> None:
         """Close setup back to its compact summary."""
@@ -815,24 +1114,49 @@ class ScheduleAppUI:
         self._setup_dialog.withdraw()
 
     def refresh_setup_summary(self) -> None:
-        """Summarize configured templates and printer without exposing paths."""
+        """Identify configured template sources without exposing long paths."""
         if self.setup_summary_label is None:
             return
-        day_configured = bool(self.get_day_folder())
-        night_configured = bool(self.get_night_folder())
-        if day_configured and night_configured:
-            template_status = "Templates configured"
-        elif day_configured or night_configured:
-            template_status = "Template folders incomplete"
-        else:
-            template_status = "Template folders not configured"
+        day_folder = self.get_day_folder()
+        night_folder = self.get_night_folder()
         printer = self.get_printer_name()
         printer_status = (
-            printer
-            if printer and printer != DEFAULT_PRINTER_LABEL
-            else "Choose a printer"
+            printer if printer and printer != DEFAULT_PRINTER_LABEL else "Not selected"
         )
-        self.setup_summary_label.config(text=f"{template_status}\n{printer_status}")
+        day_status = self._folder_tail(day_folder)
+        night_status = self._folder_tail(night_folder)
+        self.setup_summary_label.config(
+            text=(
+                f"Night templates: {night_status}\n"
+                f"Day templates: {day_status}\n"
+                f"Printer: {printer_status}"
+            )
+        )
+
+    @staticmethod
+    def _folder_tail(folder: str) -> str:
+        """Return a compact, recognizable two-part folder identity."""
+        if not isinstance(folder, str):
+            return "Not configured"
+        value = folder.strip().rstrip("/\\")
+        if not value or value == _PATH_PLACEHOLDER:
+            return "Not configured"
+        parts = [part for part in re.split(r"[/\\]+", value) if part]
+        if not parts:
+            return value
+        if parts[0].endswith(":"):
+            tokens = parts if len(parts) <= 3 else [parts[0], parts[1], parts[-1]]
+        elif value.startswith("\\\\") and len(parts) > 3:
+            tokens = [f"{parts[0]}\\{parts[1]}", parts[2], parts[-1]]
+        else:
+            tokens = parts[-3:]
+        compact = " › ".join(tokens)
+        if len(compact) <= 52:
+            return compact
+        shortened = [
+            token if len(token) <= 15 else f"{token[:12]}…" for token in tokens
+        ]
+        return " › ".join(shortened)
 
     def _create_shift_selection_row(self, parent: ttk.Frame) -> None:
         """Create equal-width Night and Day selection panels."""
@@ -840,6 +1164,21 @@ class ScheduleAppUI:
         row.pack(fill="x", pady=(0, 16))
         row.grid_columnconfigure(0, weight=1, uniform="shift")
         row.grid_columnconfigure(1, weight=1, uniform="shift")
+
+        if DateEntry is None:
+            self._dependency_error = (
+                "Date selection is unavailable. Reinstall ShiftPress to restore "
+                "tkcalendar."
+            )
+            ttk.Label(
+                row,
+                text=self._dependency_error,
+                style=_STYLE_ERROR_LABEL,
+                wraplength=760,
+                justify="left",
+            ).grid(row=0, column=0, columnspan=2, sticky="ew")
+            logger.error("tkcalendar is not installed; date pickers unavailable")
+            return
 
         self._create_shift_panel(
             row,
@@ -897,15 +1236,6 @@ class ScheduleAppUI:
         column: int,
     ) -> None:
         """Create one independent native shift selection panel."""
-        if DateEntry is None:
-            ttk.Label(
-                parent,
-                text="Missing dependency: tkcalendar. Please reinstall requirements.txt.",
-                style=_STYLE_ERROR_LABEL,
-            ).grid(row=0, column=column, sticky="nsew", padx=8)
-            logger.error("tkcalendar is not installed; date pickers unavailable")
-            return
-
         date_entry_cls = cast(Any, DateEntry)
         label = shift_type.title()
         accent = COLORS.night_accent if shift_type == "night" else COLORS.day_accent
@@ -1004,7 +1334,7 @@ class ScheduleAppUI:
         count_label = ttk.Label(
             card,
             text="Selected · 1 document",
-            style=_STYLE_COUNT_READY_LABEL,
+            style=_STYLE_COUNT_SELECTED_LABEL,
         )
         count_label.pack(anchor="w")
 
@@ -1064,6 +1394,22 @@ class ScheduleAppUI:
         del shift_type
         self.refresh_manifest_preview()
 
+    def _reset_run(self) -> None:
+        """Restore the common Night-today and Day-tomorrow print scope."""
+        defaults: dict[ShiftType, date] = {
+            "night": self._today,
+            "day": self._today + timedelta(days=1),
+        }
+        for shift_type, panel in self._shift_panels.items():
+            default_date = defaults[shift_type]
+            panel.enabled_var.set(True)
+            panel.mode_var.set("single")
+            panel.single_picker.set_date(default_date)
+            panel.range_start_picker.set_date(default_date)
+            panel.range_end_picker.set_date(default_date)
+            self._sync_shift_panel_state(shift_type, refresh=False)
+        self.refresh_manifest_preview()
+
     def _on_range_start_selected(self, shift_type: ShiftType) -> None:
         """Keep one shift's range end on or after its range start."""
         panel = self._shift_panels[shift_type]
@@ -1076,7 +1422,9 @@ class ScheduleAppUI:
             logger.debug(f"Error syncing {shift_type} date pickers: {e}")
         self.refresh_manifest_preview()
 
-    def _sync_shift_panel_state(self, shift_type: ShiftType) -> None:
+    def _sync_shift_panel_state(
+        self, shift_type: ShiftType, refresh: bool = True
+    ) -> None:
         """Apply include/mode state to one panel without changing its values."""
         panel = self._shift_panels[shift_type]
         enabled = bool(panel.enabled_var.get()) and self._inputs_enabled
@@ -1104,7 +1452,7 @@ class ScheduleAppUI:
             panel.range_wrap.grid_remove()
             panel.single_wrap.grid()
 
-        if len(self._shift_panels) == 2:
+        if refresh and len(self._shift_panels) == 2:
             self.refresh_manifest_preview()
 
     def _create_manifest_card(self, parent: ttk.Frame) -> None:
@@ -1114,7 +1462,7 @@ class ScheduleAppUI:
         card.pack(fill="x", pady=(0, 16))
         self.manifest_title_label = ttk.Label(
             card,
-            text="This run: No schedules selected",
+            text="Print scope: No schedules selected",
             style="ManifestTitle.TLabel",
         )
         self.manifest_title_label.pack(anchor="w", pady=(0, 10))
@@ -1124,6 +1472,7 @@ class ScheduleAppUI:
             style=_STYLE_CARD_SUB_LABEL,
             justify="left",
             anchor="w",
+            wraplength=760,
         )
         self.manifest_label.pack(fill="x")
 
@@ -1188,21 +1537,33 @@ class ScheduleAppUI:
 
         try:
             self.root.update_idletasks()
-            req_w = self.root.winfo_reqwidth()
-            req_h = self.root.winfo_reqheight()
-            scr_w = self.root.winfo_screenwidth()
-            scr_h = self.root.winfo_screenheight()
+            if self._main_content is None:
+                return
+            req_w = self._main_content.winfo_reqwidth()
+            req_h = self._main_content.winfo_reqheight()
+            left, top, right, bottom = _get_work_area(self.root)
+            work_width = right - left
+            work_height = bottom - top
 
             target_w = min(
-                max(WINDOW_WIDTH, req_w), max(AUTO_RESIZE_MIN_WIDTH, scr_w - 80)
+                max(WINDOW_WIDTH, req_w),
+                max(
+                    AUTO_RESIZE_MIN_WIDTH,
+                    work_width - _WINDOW_FRAME_WIDTH_RESERVE,
+                ),
             )
-            target_h = min(
-                max(AUTO_RESIZE_MIN_HEIGHT, req_h),
-                max(AUTO_RESIZE_MIN_HEIGHT, scr_h - 80),
+            usable_h = max(
+                AUTO_RESIZE_MIN_HEIGHT,
+                work_height - _WINDOW_FRAME_HEIGHT_RESERVE,
             )
+            target_h = min(max(AUTO_RESIZE_MIN_HEIGHT, req_h), usable_h)
 
-            self.root.minsize(target_w, target_h)
+            self.root.minsize(target_w, AUTO_RESIZE_MIN_HEIGHT)
             self.root.geometry(f"{target_w}x{target_h}")
+            if req_h > target_h:
+                self._show_main_scrollbar()
+            else:
+                self._hide_main_scrollbar()
         except Exception as e:
             logger.debug(f"Content sizing skipped: {e}")
 
@@ -1240,7 +1601,7 @@ class ScheduleAppUI:
             menu.configure(
                 bg=COLORS.surface,
                 fg=COLORS.text_main,
-                activebackground=COLORS.accent,
+                activebackground=COLORS.action,
                 activeforeground=COLORS.text_main,
                 borderwidth=1,
                 relief="flat",
@@ -1256,18 +1617,16 @@ class ScheduleAppUI:
             cursor="hand2",
         )
         self._refresh_btn.pack(side="right")
-        _ToolTip(self._refresh_btn, "Re-scan for available printers")
 
-        if not all_printers:
-            msg = "No printers found. Check connections."
-            if win32print is None:
-                msg = "Printing requires Windows with pywin32 installed (win32print unavailable)."
-            ttk.Label(
-                output_row,
-                text=msg,
-                style=_STYLE_CARD_SUB_LABEL,
-                foreground=COLORS.error,
-            ).pack(anchor="w", pady=(4, 0))
+        self._printer_status_label = ttk.Label(
+            output_row,
+            text="",
+            style=_STYLE_CARD_SUB_LABEL,
+            wraplength=640,
+            justify="left",
+        )
+        self._printer_status_label.pack(anchor="w", pady=(6, 0))
+        self._update_printer_status(all_printers)
 
     def _on_printer_changed(self, *_args: object) -> None:
         """Refresh setup and manifest copy after the printer changes."""
@@ -1285,8 +1644,10 @@ class ScheduleAppUI:
         status_wrap.grid(row=0, column=0, sticky="ew", padx=(0, 24))
         self.status_label = ttk.Label(
             status_wrap,
-            text="Review the selected schedules",
+            text="Complete Setup to prepare a print scope",
             style=_STYLE_SUB_LABEL,
+            wraplength=620,
+            justify="left",
         )
         self.status_label.pack(side="left")
 
@@ -1297,11 +1658,31 @@ class ScheduleAppUI:
             command=self.open_logs_folder,
             cursor="hand2",
         )
-        open_logs_btn.pack(side="left", padx=(12, 0))
-        _ToolTip(open_logs_btn, "Open configuration, log, and report folder")
+        self._logs_btn = open_logs_btn
+
+        reset_btn = ttk.Button(
+            status_wrap,
+            text="Reset run",
+            style=_STYLE_TERTIARY_BUTTON,
+            command=self._reset_run,
+            cursor="hand2",
+        )
+        reset_btn.pack(side="left", padx=(12, 0))
+
+        help_btn = ttk.Button(
+            status_wrap,
+            text="How to use",
+            underline=0,
+            style=_STYLE_TERTIARY_BUTTON,
+            command=self.show_help,
+            cursor="hand2",
+        )
+        help_btn.pack(side="left", padx=(12, 0))
 
         progress_row = ttk.Frame(footer)
+        self._progress_row = progress_row
         progress_row.grid(row=1, column=0, sticky="ew", padx=(0, 24), pady=(10, 0))
+        progress_row.grid_remove()
 
         self.progress_var = tk.DoubleVar()
         self.progress = ttk.Progressbar(
@@ -1323,7 +1704,8 @@ class ScheduleAppUI:
 
         self.print_btn = ttk.Button(
             footer,
-            text="Print schedules",
+            text=_PRINT_BUTTON_LABEL,
+            underline=0,
             style=_STYLE_PRIMARY_BUTTON,
             width=20,
             cursor="hand2",
@@ -1386,6 +1768,7 @@ class ScheduleAppUI:
             self._set_folder_entry(entry, path)
             logger.debug(f"Selected folder: {path}")
             self.refresh_setup_summary()
+            self.refresh_manifest_preview()
 
     # ------------------------------------------------------------------
     # Public getters
@@ -1503,7 +1886,7 @@ class ScheduleAppUI:
     def _print_button_text(count: int) -> str:
         """Return the count-bearing label for the primary action."""
         if count == 0:
-            return "Print schedules"
+            return _PRINT_BUTTON_LABEL
         if count == 1:
             return "Print 1 schedule"
         return f"Print {count} schedules"
@@ -1533,7 +1916,7 @@ class ScheduleAppUI:
                 self._set_count(
                     shift_type,
                     f"Selected · {count} {self._document_noun(count)}",
-                    _STYLE_COUNT_READY_LABEL,
+                    _STYLE_COUNT_SELECTED_LABEL,
                 )
 
     def _describe_manifest(
@@ -1543,10 +1926,11 @@ class ScheduleAppUI:
     ) -> tuple[str, list[str]]:
         """Return the manifest title and one numbered line per included shift."""
         if not manifest:
-            return "This run: No schedules selected", []
+            return "Print scope: No schedules selected", []
 
         total = len(manifest)
-        title = f"This run: {total} schedule{'' if total == 1 else 's'}"
+        noun = "schedule" if total == 1 else "schedules"
+        title = f"Print scope: {total} {noun} selected"
         lines: list[str] = []
         row_number = 1
         for selection in selections:
@@ -1559,9 +1943,71 @@ class ScheduleAppUI:
             row_number += 1
         return title, lines
 
-    def refresh_manifest_preview(self) -> None:
+    def _show_dependency_manifest_error(self) -> bool:
+        """Render the missing-date-control state and report whether it handled view."""
+        if len(self._shift_panels) == 2:
+            return False
+        if not self._dependency_error:
+            return True
+        if self.manifest_title_label is not None:
+            self.manifest_title_label.config(
+                text="Print scope: Date selection unavailable"
+            )
+        if self.manifest_label is not None:
+            self.manifest_label.config(text=self._dependency_error)
+        if self.print_btn is not None:
+            self.print_btn.config(text=_PRINT_BUTTON_LABEL)
+            self.print_btn.config(state="disabled")
+        return True
+
+    def _manifest_preview_data(
+        self,
+        selections: tuple[ShiftSelection, ShiftSelection],
+        errors: dict[ShiftType, Optional[str]],
+    ) -> tuple[tuple[PrintJob, ...], str, list[str], tuple[ShiftSelection, ...]]:
+        """Build the neutral preview data before local blockers are applied."""
+        invalid = tuple(
+            selection for selection in selections if errors[selection.shift_type]
+        )
+        if invalid:
+            names = " and ".join(selection.shift_type.title() for selection in invalid)
+            title = f"Print scope: Check {names} date selection"
+            lines = [errors[selection.shift_type] or "" for selection in invalid]
+            return (), title, lines, invalid
+
+        manifest = build_print_manifest(selections)
+        title, lines = self._describe_manifest(selections, manifest)
+        return manifest, title, lines, invalid
+
+    def _render_manifest_preview(
+        self,
+        title: str,
+        lines: list[str],
+        manifest_count: int,
+        blocker: Optional[str],
+        update_status: bool,
+    ) -> None:
+        """Apply prepared manifest copy and action state to optional widgets."""
+        if self.manifest_title_label is not None:
+            self.manifest_title_label.config(text=title)
+        if self.manifest_label is not None:
+            self.manifest_label.config(text="\n".join(lines))
+        if update_status and self.status_label is not None:
+            status_text = (
+                blocker or "Scope selected. Preflight runs when you select Print."
+            )
+            status_style = _STYLE_ERROR_LABEL if blocker else _STYLE_SUB_LABEL
+            self.status_label.config(text=status_text, style=status_style)
+        if self.print_btn is not None:
+            self.print_btn.config(text=self._print_button_text(manifest_count))
+            state: Literal["normal", "disabled"] = (
+                "normal" if blocker is None and self._inputs_enabled else "disabled"
+            )
+            self.print_btn.config(state=state)
+
+    def refresh_manifest_preview(self, update_status: bool = True) -> None:
         """Refresh the preflight-neutral manifest copy and count-aware action."""
-        if len(self._shift_panels) != 2:
+        if self._show_dependency_manifest_error():
             return
 
         selections = self.get_shift_selections()
@@ -1569,16 +2015,9 @@ class ScheduleAppUI:
             selection.shift_type: selection.validate() for selection in selections
         }
         self._refresh_shift_counts(selections, errors)
-
-        invalid = [s for s in selections if errors[s.shift_type]]
-        if invalid:
-            manifest: tuple[PrintJob, ...] = ()
-            names = " and ".join(s.shift_type.title() for s in invalid)
-            title = f"This run: Check {names} date selection"
-            lines = [errors[s.shift_type] or "" for s in invalid]
-        else:
-            manifest = build_print_manifest(selections)
-            title, lines = self._describe_manifest(selections, manifest)
+        manifest, title, lines, invalid = self._manifest_preview_data(
+            selections, errors
+        )
 
         printer = self.get_printer_name()
         printer_label = (
@@ -1587,23 +2026,24 @@ class ScheduleAppUI:
             else "Choose a printer"
         )
         lines.append(f"Printer: {printer_label}")
-
-        if self.manifest_title_label is not None:
-            self.manifest_title_label.config(text=title)
-        if self.manifest_label is not None:
-            self.manifest_label.config(text="\n".join(lines))
-        if self.print_btn is not None:
-            self.print_btn.config(text=self._print_button_text(len(manifest)))
+        blocker = _manifest_blocker(selections, invalid, manifest, printer_label)
+        if blocker:
+            lines.append(f"Cannot print: {blocker}")
+        self._render_manifest_preview(
+            title, lines, len(manifest), blocker, update_status
+        )
 
     def set_processing_mode(self, processing: bool) -> None:
         """Switch the primary action between print and cancellation states."""
         if self.print_btn is None:
             return
         if processing:
+            if self._progress_row is not None:
+                self._progress_row.grid()
             self.print_btn.config(text="Cancel", style=_STYLE_DANGER_BUTTON)
         else:
             self.print_btn.config(style=_STYLE_PRIMARY_BUTTON)
-            self.refresh_manifest_preview()
+            self.refresh_manifest_preview(update_status=False)
 
     # ------------------------------------------------------------------
     # Public setters / commands
@@ -1627,6 +2067,7 @@ class ScheduleAppUI:
             self.print_btn.config(command=command)
             # Allow Enter key to trigger execution only when the button has focus.
             self.print_btn.bind("<Return>", lambda _event: command())
+            self.root.bind("<Alt-p>", lambda _event: command())
         if cancel_command is not None:
             self.root.bind("<Escape>", lambda _event: cancel_command())
 
@@ -1671,7 +2112,7 @@ class ScheduleAppUI:
         """Set one shift panel's processing lock state."""
         try:
             panel.include_check.config(state=state)
-            self._sync_shift_panel_state(shift_type)
+            self._sync_shift_panel_state(shift_type, refresh=False)
         except Exception as e:
             logger.debug(f"Could not set {shift_type} panel state: {e}")
 
@@ -1700,29 +2141,25 @@ class ScheduleAppUI:
             level: Explicit style level.  When ``None`` (default) the style
                 is inferred from the message text for backward compatibility.
         """
+        if self._progress_row is not None:
+            self._progress_row.grid()
         if self.status_label:
-            if level == "success":
-                style = _STYLE_SUCCESS_LABEL
-            elif level == "error":
-                style = _STYLE_ERROR_LABEL
-            elif level is not None:
-                style = _STYLE_SUB_LABEL
-            else:
-                # Infer from message for callers that don't pass level.
-                msg_lower = message.lower()
-                if "complete" in msg_lower:
-                    style = _STYLE_SUCCESS_LABEL
-                elif (
-                    "cancel" in msg_lower or "error" in msg_lower or "fail" in msg_lower
-                ):
-                    style = _STYLE_ERROR_LABEL
-                else:
-                    style = _STYLE_SUB_LABEL
+            style = _status_style(message, level)
             self.status_label.config(text=message, style=style)
+            self._set_logs_button_visibility(style)
         if self.progress_var:
             self.progress_var.set(progress)
         if self._progress_pct:
             self._progress_pct.config(text=f"{int(progress)}%")
+
+    def _set_logs_button_visibility(self, status_style: str) -> None:
+        """Show the logs shortcut only while an error status is visible."""
+        if self._logs_btn is None:
+            return
+        if status_style == _STYLE_ERROR_LABEL:
+            self._logs_btn.pack(side="left", padx=(12, 0))
+            return
+        self._logs_btn.pack_forget()
 
     # ------------------------------------------------------------------
     # Dialogs
@@ -1757,6 +2194,23 @@ class ScheduleAppUI:
         """
         logger.info(f"{title}: {message}")
         messagebox.showinfo(title, message)
+
+    def show_help(self) -> None:
+        """Explain the print-run workflow in the operator's own terms."""
+        self.show_info(
+            "How to use ShiftPress",
+            "1. In Setup, choose the Night and Day template folders and a printer.\n\n"
+            "Select Apply to keep Setup changes, or Cancel to restore the previous "
+            "folders and printer.\n\n"
+            "2. Include the Night schedule, Day schedule, or both. Choose a single "
+            "date or date range for each included shift.\n\n"
+            "3. Review Print scope, then select Print. ShiftPress runs preflight checks "
+            "before opening Word and stops if a required template or printer is "
+            "unavailable.\n\n"
+            "Reset run restores the common Night-today and Day-tomorrow selection.\n\n"
+            "Keyboard: Alt+S opens Setup, Alt+P prints, Alt+H opens this help, and "
+            "Escape stops after the current document.",
+        )
 
     def ask_yes_no(self, title: str, message: str) -> bool:
         """Ask the user a yes/no question.

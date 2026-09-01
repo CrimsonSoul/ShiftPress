@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import src.ui as ui_module
 from src.constants import COLORS, FONTS
 from src.ui import ScheduleAppUI, _PATH_PLACEHOLDER
 
@@ -77,6 +78,8 @@ class TestScheduleAppUI:
         ), patch(
             "src.ui.ttk.Button"
         ) as MockTtkButton, patch(
+            "src.ui.ttk.Scrollbar"
+        ) as MockScrollbar, patch(
             "src.ui.ttk.Checkbutton"
         ), patch(
             "src.ui.ttk.Radiobutton"
@@ -89,6 +92,8 @@ class TestScheduleAppUI:
         ), patch(
             "src.ui.tk.Button"
         ) as MockTkButton, patch(
+            "src.ui.tk.Canvas"
+        ) as MockCanvas, patch(
             "src.ui.tk.Toplevel"
         ) as MockToplevel, patch(
             "src.ui.tk.StringVar", side_effect=_FakeVariable
@@ -112,6 +117,8 @@ class TestScheduleAppUI:
             ui.printer_var = _FakeVariable(value="Test Printer")
             ui._test_ttk_button_class = MockTtkButton
             ui._test_tk_button_class = MockTkButton
+            ui._test_canvas_class = MockCanvas
+            ui._test_scrollbar_class = MockScrollbar
             ui._test_frame_class = MockFrame
             ui._test_label_class = MockLabel
             ui._test_label_frame_class = MockLabelFrame
@@ -123,6 +130,7 @@ class TestScheduleAppUI:
         assert ui.day_entry is not None
         assert ui.night_entry is not None
         assert ui.print_btn is not None
+        ui.root.title.assert_called_with("ShiftPress")
 
     def test_get_day_folder(self, ui):
         """Should return value from day entry."""
@@ -297,17 +305,114 @@ class TestScheduleAppUI:
 
     def test_window_sizing_derives_from_rendered_content(self, ui, root):
         """minsize and geometry must come from content, not a hardcoded guess."""
-        root.winfo_reqheight.return_value = 812
-        root.winfo_reqwidth.return_value = 1000
+        ui._main_content.winfo_reqheight.return_value = 812
+        ui._main_content.winfo_reqwidth.return_value = 1000
         root.winfo_screenwidth.return_value = 1920
         root.winfo_screenheight.return_value = 1080
         root.minsize.reset_mock()
         root.geometry.reset_mock()
 
-        ui._apply_content_sizing()
+        with patch("src.ui._get_work_area", return_value=(0, 0, 1920, 1040)):
+            ui._apply_content_sizing()
 
-        root.minsize.assert_called_once_with(1040, 812)
+        root.minsize.assert_called_once_with(1040, 400)
         root.geometry.assert_called_once_with("1040x812")
+
+    def test_constrained_display_enables_vertical_overflow_recovery(self, ui, root):
+        """Content taller than the usable screen must remain reachable by scrolling."""
+        ui._main_content.winfo_reqheight.return_value = 1100
+        ui._main_content.winfo_reqwidth.return_value = 1000
+        root.winfo_screenwidth.return_value = 1366
+        root.winfo_screenheight.return_value = 768
+        root.geometry.reset_mock()
+        ui._show_main_scrollbar = MagicMock()
+
+        with patch("src.ui._get_work_area", return_value=(0, 0, 1366, 728)):
+            ui._apply_content_sizing()
+
+        root.geometry.assert_called_once_with("1040x688")
+        ui._show_main_scrollbar.assert_called_once()
+
+    def test_main_overflow_helpers_resize_and_scroll_visible_content(self, ui):
+        """The main viewport must expose and operate its scrollbar when constrained."""
+        event = MagicMock(width=640, height=480, delta=60)
+        ui._main_content.winfo_reqheight.return_value = 900
+        ui._main_scrollbar.winfo_ismapped.return_value = True
+
+        ui._sync_main_scroll_region()
+        ui._resize_main_content(event)
+        ui._scroll_main_content(event)
+
+        ui._main_canvas.configure.assert_any_call(
+            scrollregion=ui._main_canvas.bbox.return_value
+        )
+        ui._main_canvas.itemconfigure.assert_called_with(
+            ui._main_content_window, width=640
+        )
+        ui._main_scrollbar.pack.assert_called_with(side="right", fill="y")
+        ui._main_canvas.yview_scroll.assert_called_with(-1, "units")
+
+    def test_windows_work_area_keeps_the_main_window_above_the_taskbar(self, ui, root):
+        """Centering must use Windows' work area, not the taskbar-covered screen."""
+        root.winfo_width.return_value = 1040
+        root.winfo_height.return_value = 828
+        root.geometry.reset_mock()
+
+        with patch("src.ui._get_work_area", return_value=(0, 0, 1517, 894)):
+            ui._center_window()
+
+        root.geometry.assert_called_once_with("1040x828+230+13")
+
+    def test_windows_work_area_caps_content_without_hiding_the_action(self, ui, root):
+        """Very tall content must leave room for native window decorations."""
+        ui._main_content.winfo_reqheight.return_value = 1100
+        ui._main_content.winfo_reqwidth.return_value = 1000
+        root.geometry.reset_mock()
+        ui._show_main_scrollbar = MagicMock()
+
+        with patch("src.ui._get_work_area", return_value=(0, 0, 1517, 894)):
+            ui._apply_content_sizing()
+
+        root.geometry.assert_called_once_with("1040x854")
+        ui._show_main_scrollbar.assert_called_once()
+
+    def test_setup_dialog_caps_height_and_enables_overflow_recovery(self, ui):
+        """Required Setup controls must remain reachable on a short display."""
+        dialog = ui._setup_dialog
+        dialog.winfo_screenwidth.return_value = 1366
+        dialog.winfo_screenheight.return_value = 600
+        ui.root.winfo_rootx.return_value = 100
+        ui.root.winfo_rooty.return_value = 100
+        ui.root.winfo_width.return_value = 1040
+        ui._setup_content.winfo_reqwidth.return_value = 700
+        ui._setup_content.winfo_reqheight.return_value = 760
+        ui._show_setup_scrollbar = MagicMock()
+
+        with patch("src.ui._get_work_area", return_value=(0, 0, 1366, 560)):
+            ui._show_setup_dialog()
+
+        geometry = dialog.geometry.call_args.args[0]
+        assert geometry.startswith("720x520+")
+        ui._show_setup_scrollbar.assert_called_once()
+
+    def test_setup_overflow_helpers_resize_and_scroll_visible_content(self, ui):
+        """The Setup viewport must expose and operate its scrollbar when constrained."""
+        event = MagicMock(width=620, height=400, delta=-60)
+        ui._setup_content.winfo_reqheight.return_value = 700
+        ui._setup_scrollbar.winfo_ismapped.return_value = True
+
+        ui._sync_setup_scroll_region()
+        ui._resize_setup_content(event)
+        ui._scroll_setup_content(event)
+
+        ui._setup_canvas.configure.assert_any_call(
+            scrollregion=ui._setup_canvas.bbox.return_value
+        )
+        ui._setup_canvas.itemconfigure.assert_called_with(
+            ui._setup_content_window, width=620
+        )
+        ui._setup_scrollbar.pack.assert_called_with(side="right", fill="y")
+        ui._setup_canvas.yview_scroll.assert_called_with(1, "units")
 
     def test_manifest_preview_uses_actual_selected_job_count(self, ui):
         """The visible manifest and action should reflect independent jobs."""
@@ -319,18 +424,19 @@ class TestScheduleAppUI:
 
         assert (
             ui.manifest_title_label.config.call_args.kwargs["text"]
-            == "This run: 2 schedules"
+            == "Print scope: 2 schedules selected"
         )
         manifest_text = ui.manifest_label.config.call_args.kwargs["text"]
         assert "1. Night — 07/30/2026 — 1 document" in manifest_text
         assert "2. Day — 07/31/2026 — 1 document" in manifest_text
         assert "Printer: Test Printer" in manifest_text
-        ui.print_btn.config.assert_called_with(text="Print 2 schedules")
+        ui.print_btn.config.assert_any_call(text="Print 2 schedules")
+        ui.print_btn.config.assert_any_call(state="normal")
         ui._shift_panels["night"].count_label.config.assert_called_with(
-            text="Selected · 1 document", style="CountReady.TLabel"
+            text="Selected · 1 document", style="CountSelected.TLabel"
         )
         ui._shift_panels["day"].count_label.config.assert_called_with(
-            text="Selected · 1 document", style="CountReady.TLabel"
+            text="Selected · 1 document", style="CountSelected.TLabel"
         )
 
     def test_single_schedule_manifest_reads_as_singular(self, ui):
@@ -344,9 +450,9 @@ class TestScheduleAppUI:
 
         assert (
             ui.manifest_title_label.config.call_args.kwargs["text"]
-            == "This run: 1 schedule"
+            == "Print scope: 1 schedule selected"
         )
-        ui.print_btn.config.assert_called_with(text="Print 1 schedule")
+        ui.print_btn.config.assert_any_call(text="Print 1 schedule")
 
     def test_excluded_shift_uses_muted_state_not_success(self, ui):
         """An excluded shift must not render in success green."""
@@ -385,13 +491,14 @@ class TestScheduleAppUI:
             text="Check Night date selection", style="CountError.TLabel"
         )
         ui._shift_panels["day"].count_label.config.assert_called_once_with(
-            text="Selected · 1 document", style="CountReady.TLabel"
+            text="Selected · 1 document", style="CountSelected.TLabel"
         )
         title = ui.manifest_title_label.config.call_args.kwargs["text"]
-        assert title == "This run: Check Night date selection"
+        assert title == "Print scope: Check Night date selection"
         body = ui.manifest_label.config.call_args.kwargs["text"]
         assert "Night schedule: End date cannot be before start date" in body
-        ui.print_btn.config.assert_called_with(text="Print schedules")
+        ui.print_btn.config.assert_any_call(text="Print schedules")
+        ui.print_btn.config.assert_any_call(state="disabled")
 
     def test_manifest_preview_blocks_empty_selection(self, ui):
         """No included shifts should produce no jobs and no numeric promise."""
@@ -405,9 +512,72 @@ class TestScheduleAppUI:
 
         assert (
             ui.manifest_title_label.config.call_args.kwargs["text"]
-            == "This run: No schedules selected"
+            == "Print scope: No schedules selected"
         )
-        ui.print_btn.config.assert_called_with(text="Print schedules")
+        ui.print_btn.config.assert_any_call(text="Print schedules")
+        ui.print_btn.config.assert_any_call(state="disabled")
+
+    def test_manifest_preview_blocks_enabled_shift_without_its_folder(self, ui):
+        """A locally missing folder should explain the exact Setup action."""
+        ui.day_entry.get.return_value = ""
+        ui.manifest_title_label = MagicMock()
+        ui.manifest_label = MagicMock()
+        ui.print_btn = MagicMock()
+
+        ui.refresh_manifest_preview()
+
+        body = ui.manifest_label.config.call_args.kwargs["text"]
+        assert "Cannot print: Choose Day Templates in Setup" in body
+        ui.print_btn.config.assert_any_call(state="disabled")
+        ui.status_label.config.assert_called_with(
+            text="Choose Day Templates in Setup", style="Error.TLabel"
+        )
+
+    def test_manifest_preview_blocks_missing_printer(self, ui):
+        """The action should stay disabled until an actual printer is selected."""
+        ui.printer_var.set("Choose Printer")
+        ui.manifest_title_label = MagicMock()
+        ui.manifest_label = MagicMock()
+        ui.print_btn = MagicMock()
+
+        ui.refresh_manifest_preview()
+
+        body = ui.manifest_label.config.call_args.kwargs["text"]
+        assert "Cannot print: Choose a printer in Setup" in body
+        ui.print_btn.config.assert_any_call(state="disabled")
+        ui.status_label.config.assert_called_with(
+            text="Choose a printer in Setup", style="Error.TLabel"
+        )
+
+    def test_missing_dateentry_dependency_disables_print_with_recovery(self, ui):
+        """A missing date picker dependency must become an actionable state."""
+        ui._dependency_error = (
+            "Date selection is unavailable. Reinstall ShiftPress to restore tkcalendar."
+        )
+        ui._shift_panels.clear()
+        ui.manifest_title_label = MagicMock()
+        ui.manifest_label = MagicMock()
+        ui.print_btn = MagicMock()
+
+        ui.refresh_manifest_preview()
+
+        assert (
+            ui.manifest_title_label.config.call_args.kwargs["text"]
+            == "Print scope: Date selection unavailable"
+        )
+        assert (
+            "Reinstall ShiftPress" in ui.manifest_label.config.call_args.kwargs["text"]
+        )
+        ui.print_btn.config.assert_any_call(state="disabled")
+
+    def test_selected_count_style_is_neutral_before_preflight(self, ui):
+        """A local selection must not use success green before preflight."""
+        ui.style.configure.assert_any_call(
+            "CountSelected.TLabel",
+            font=FONTS.bold,
+            foreground=COLORS.text_main,
+            background=COLORS.surface,
+        )
 
     def test_primary_action_uses_themed_ttk_button(self, ui):
         """The primary action must not use the unreadable macOS classic Tk button."""
@@ -426,10 +596,32 @@ class TestScheduleAppUI:
         assert ttk_print_calls[0].kwargs["style"] == "Primary.TButton"
         assert tk_print_calls == []
 
+    def test_primary_action_uses_action_blue_focus_border(self, ui):
+        """The print action should not borrow the Day shift amber border."""
+        ui.style.configure.assert_any_call(
+            "Primary.TButton",
+            background=COLORS.action,
+            foreground=COLORS.text_main,
+            bordercolor=COLORS.action,
+            borderwidth=1,
+            font=FONTS.button,
+            padding=(26, 16),
+        )
+
+    def test_interactive_styles_have_explicit_keyboard_focus(self, ui):
+        """Native controls need a visible high-contrast focus treatment."""
+        for style_name in ("TButton", "TEntry", "TCombobox", "TMenubutton"):
+            ui.style.map.assert_any_call(
+                style_name,
+                bordercolor=[("focus", COLORS.night_accent)],
+                lightcolor=[("focus", COLORS.night_accent)],
+                darkcolor=[("focus", COLORS.night_accent)],
+            )
+
     def test_group_titles_use_clean_background_and_custom_card_shells(self, ui):
         """Section titles should sit on the window without LabelFrame patches."""
         for style_name, foreground in (
-            ("SetupTitle.TLabel", COLORS.accent),
+            ("SetupTitle.TLabel", COLORS.text_main),
             ("NightTitle.TLabel", COLORS.night_accent),
             ("DayTitle.TLabel", COLORS.day_accent),
         ):
@@ -448,6 +640,20 @@ class TestScheduleAppUI:
             "NightCard.TFrame",
             "DayCard.TFrame",
         } <= card_styles
+
+    def test_generic_input_selection_does_not_borrow_day_amber(self, ui):
+        """Amber should identify Day, not generic input or menu interaction."""
+        ui.style.configure.assert_any_call(
+            "TEntry",
+            fieldbackground=COLORS.input,
+            foreground=COLORS.text_main,
+            insertcolor=COLORS.text_main,
+            selectbackground=COLORS.action,
+            selectforeground=COLORS.text_main,
+            bordercolor=COLORS.border,
+            borderwidth=1,
+            padding=(8, 7),
+        )
 
     def test_manifest_uses_plain_bordered_frame_without_empty_title_strip(self, ui):
         """The manifest should not reserve a blank LabelFrame title channel."""
@@ -474,6 +680,38 @@ class TestScheduleAppUI:
         assert len(logs_calls) == 1
         assert logs_calls[0].kwargs["style"] == "Tertiary.TButton"
 
+        help_calls = [
+            call
+            for call in ui._test_ttk_button_class.call_args_list
+            if call.kwargs.get("text") == "How to use"
+        ]
+        assert len(help_calls) == 1
+        assert help_calls[0].kwargs["style"] == "Tertiary.TButton"
+
+    def test_progress_is_hidden_until_status_work_begins(self, ui):
+        """An idle 0% bar should not compete with the primary task."""
+        ui._progress_row.grid_remove.assert_called()
+
+        ui.update_status("Checking templates…", 0, level="info")
+
+        ui._progress_row.grid.assert_called()
+
+    def test_long_manifest_and_status_copy_wraps_in_the_window(self, ui):
+        """Long operational state should wrap instead of widening or clipping."""
+        manifest_call = next(
+            call
+            for call in ui._test_label_class.call_args_list
+            if call.kwargs.get("text") == "Printer: Choose a printer"
+        )
+        status_call = next(
+            call
+            for call in ui._test_label_class.call_args_list
+            if call.kwargs.get("text") == "Complete Setup to prepare a print scope"
+        )
+
+        assert manifest_call.kwargs["wraplength"] == 760
+        assert status_call.kwargs["wraplength"] == 620
+
     def test_processing_mode_uses_danger_style_then_restores_manifest_action(self, ui):
         """Cancel state and normal print state should each use readable ttk styling."""
         ui.print_btn = MagicMock()
@@ -484,15 +722,101 @@ class TestScheduleAppUI:
         ui.print_btn.config.assert_any_call(text="Cancel", style="Danger.TButton")
         ui.print_btn.config.assert_any_call(style="Primary.TButton")
 
-    def test_setup_summary_reports_configuration_without_exposing_paths(self, ui):
-        """Collapsed setup should state readiness without crowding the work surface."""
+    def test_leaving_processing_mode_preserves_the_run_outcome_status(self, ui):
+        """Re-enabling the action must not replace the final success/error message."""
+        ui.refresh_manifest_preview = MagicMock()
+
+        ui.set_processing_mode(False)
+
+        ui.refresh_manifest_preview.assert_called_once_with(update_status=False)
+
+    def test_logs_action_appears_only_for_runtime_errors(self, ui):
+        """Troubleshooting chrome should stay out of the everyday workflow."""
+        ui._logs_btn.pack.reset_mock()
+
+        ui.update_status("Processing stopped: RuntimeError", 50, level="error")
+
+        ui._logs_btn.pack.assert_called_once_with(side="left", padx=(12, 0))
+
+    def test_setup_summary_identifies_template_folder_tails(self, ui):
+        """Collapsed setup should identify active sources without showing long paths."""
         ui.setup_summary_label = MagicMock()
 
         ui.refresh_setup_summary()
 
         summary = ui.setup_summary_label.config.call_args.kwargs["text"]
-        assert summary == "Templates configured\nTest Printer"
-        assert "C:/Templates" not in summary
+        assert summary == (
+            "Night templates: C: › Templates › Night\n"
+            "Day templates: C: › Templates › Day\n"
+            "Printer: Test Printer"
+        )
+
+    def test_setup_fields_follow_night_then_day_workflow_order(self, ui):
+        """Setup should preserve the same Night-to-Day sequence as the work surface."""
+        labels = [
+            call.kwargs.get("text")
+            for call in ui._test_label_class.call_args_list
+            if call.kwargs.get("text") in {"Night Templates", "Day Templates"}
+        ]
+        assert labels == ["Night Templates", "Day Templates"]
+
+    def test_folder_summary_distinguishes_same_tail_from_different_sites(self, ui):
+        """Compact source labels must retain the drive and site identity."""
+        first = ui._folder_tail(r"C:\SiteA\Templates\Night")
+        second = ui._folder_tail(r"D:\SiteB\Templates\Night")
+
+        assert first == "C: › SiteA › Night"
+        assert second == "D: › SiteB › Night"
+        assert first != second
+
+    def test_refresh_printers_updates_visible_availability(self, ui):
+        """Printer refresh should update the persistent availability message."""
+        ui._printer_status_label = MagicMock()
+        ui._enumerate_printers = MagicMock(return_value=["Office Printer"])
+
+        ui.refresh_printers()
+
+        ui._printer_status_label.config.assert_called_with(
+            text="1 printer available", style="CardSub.TLabel"
+        )
+
+    def test_setup_dialog_uses_close_action(self, ui):
+        """Setup should expose explicit commit and rollback actions."""
+        apply_calls = [
+            call
+            for call in ui._test_ttk_button_class.call_args_list
+            if call.kwargs.get("text") == "Apply"
+        ]
+        cancel_calls = [
+            call
+            for call in ui._test_ttk_button_class.call_args_list
+            if call.kwargs.get("text") == "Cancel"
+        ]
+        assert len(apply_calls) == 1
+        assert len(cancel_calls) == 1
+
+    def test_cancel_setup_restores_values_from_when_dialog_opened(self, ui):
+        """An accidental Setup edit must be reversible without remembering values."""
+        ui._show_setup_dialog()
+        ui.day_entry.get.return_value = "C:/Wrong/Day"
+        ui.night_entry.get.return_value = "C:/Wrong/Night"
+        ui.printer_var.set("Wrong Printer")
+
+        ui._cancel_setup_dialog()
+
+        ui.day_entry.delete.assert_called_with(0, tk.END)
+        ui.day_entry.insert.assert_called_with(0, "C:/Templates/Day")
+        ui.night_entry.insert.assert_called_with(0, "C:/Templates/Night")
+        assert ui.printer_var.get() == "Test Printer"
+
+    @patch("src.ui.filedialog.askdirectory", return_value="C:/New/Day")
+    def test_browsing_folder_refreshes_readiness(self, _askdirectory, ui):
+        """Choosing a folder should immediately recompute the local blocker state."""
+        ui.refresh_manifest_preview = MagicMock()
+
+        ui._browse_folder(ui.day_entry)
+
+        ui.refresh_manifest_preview.assert_called_once()
 
     def test_setup_dialog_preserves_main_layout_and_configured_values(self, ui):
         """Setup should open separately instead of expanding the main work surface."""
@@ -510,12 +834,64 @@ class TestScheduleAppUI:
         dialog.deiconify.assert_called_once()
         dialog.lift.assert_called_once()
         dialog.focus_force.assert_called_once()
+        ui.night_entry.focus_set.assert_called_once()
         dialog.withdraw.assert_called_once()
         assert before == (
             ui.get_day_folder(),
             ui.get_night_folder(),
             ui.get_printer_name(),
         )
+
+    def test_setup_dialog_binds_escape_to_close(self, ui):
+        """Setup should be fully dismissible from the keyboard."""
+        bound_keys = [call.args[0] for call in ui._setup_dialog.bind.call_args_list]
+        assert "<Escape>" in bound_keys
+
+    def test_setup_and_help_have_global_keyboard_shortcuts(self, ui):
+        """Frequently used secondary actions need documented mnemonics."""
+        bound_keys = [call.args[0] for call in ui.root.bind.call_args_list]
+        assert "<Alt-s>" in bound_keys
+        assert "<Alt-h>" in bound_keys
+
+    def test_setup_button_mnemonic_matches_alt_s_shortcut(self, ui):
+        """The visible Setup mnemonic must match the documented Alt+S binding."""
+        setup_calls = [
+            call
+            for call in ui._test_ttk_button_class.call_args_list
+            if call.kwargs.get("text") == "Setup…"
+        ]
+        assert len(setup_calls) == 1
+        assert setup_calls[0].kwargs["underline"] == 0
+
+    def test_reset_run_restores_the_common_night_then_day_defaults(self, ui):
+        """Repeat operators need one action to undo accidental scope drift."""
+        night = ui._shift_panels["night"]
+        day = ui._shift_panels["day"]
+        night.enabled_var.set(False)
+        night.mode_var.set("range")
+        day.enabled_var.set(False)
+        day.mode_var.set("range")
+
+        ui._reset_run()
+
+        assert night.enabled_var.get() is True
+        assert day.enabled_var.get() is True
+        assert night.mode_var.get() == "single"
+        assert day.mode_var.get() == "single"
+        assert night.single_picker.get_date() == date(2026, 7, 30)
+        assert day.single_picker.get_date() == date(2026, 7, 31)
+
+    def test_show_help_explains_the_operator_flow(self, ui):
+        """Help copy should make selection, setup, and preflight understandable."""
+        ui.show_info = MagicMock()
+
+        ui.show_help()
+
+        title, message = ui.show_info.call_args.args
+        assert title == "How to use ShiftPress"
+        assert "Night" in message
+        assert "Day" in message
+        assert "preflight" in message.lower()
 
     def test_set_inputs_enabled_locks_and_restores_shift_controls(self, ui):
         """Processing lock state should cover every independent shift control."""
@@ -565,6 +941,27 @@ class TestScheduleAppUI:
             ui.update_status(msg, 0.0)
             ui.status_label.config.assert_called_with(text=msg, style="Error.TLabel")
 
+    def test_status_style_helper_preserves_explicit_and_inferred_states(self):
+        """The extracted status decision must preserve every public style rule."""
+        style_for = getattr(ui_module, "_status_style", None)
+        assert callable(style_for)
+        assert style_for("Anything", "success") == "Success.TLabel"
+        assert style_for("Anything", "error") == "Error.TLabel"
+        assert style_for("Anything", "info") == "Sub.TLabel"
+        assert style_for("Print complete", None) == "Success.TLabel"
+        assert style_for("Print failed", None) == "Error.TLabel"
+        assert style_for("Processing", None) == "Sub.TLabel"
+
+    def test_manifest_blocker_helper_keeps_missing_printer_actionable(self, ui):
+        """The extracted blocker decision must keep Print disabled without a printer."""
+        blocker_for = getattr(ui_module, "_manifest_blocker", None)
+        assert callable(blocker_for)
+        selections = ui.get_shift_selections()
+        assert (
+            blocker_for(selections, (), (MagicMock(),), "Choose a printer")
+            == "Choose a printer in Setup"
+        )
+
     @patch("tkinter.messagebox.showerror")
     def test_show_error(self, mock_error, ui):
         """Should call messagebox.showerror."""
@@ -572,10 +969,12 @@ class TestScheduleAppUI:
         mock_error.assert_called_with("Title", "Message")
 
     def test_set_start_command(self, ui):
-        """Should set the button command and bind Enter key."""
+        """Should set the button command and bind keyboard actions."""
         mock_cmd = MagicMock()
         ui.set_start_command(mock_cmd)
         ui.print_btn.config.assert_called_with(command=mock_cmd)
+        bound_keys = [call.args[0] for call in ui.root.bind.call_args_list]
+        assert "<Alt-p>" in bound_keys
 
     def test_set_start_command_with_cancel(self, ui):
         """Should bind Escape key when cancel_command is provided."""

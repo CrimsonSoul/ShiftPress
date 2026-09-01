@@ -19,7 +19,7 @@ const REVIEWED_STATUS_BY_TRANSITION = Object.freeze({
   falsepositive: 'FALSE_POSITIVE',
 });
 const REVIEW_COMMENT_BY_RULE = Object.freeze({
-  // ShiftPrint starts with zero reviewed exceptions. Add an entry only
+  // ShiftPress starts with zero reviewed exceptions. Add an entry only
   // after a human review, bound to the exact rule, and keep the reason
   // specific enough that a later reader can re-litigate it.
 });
@@ -37,7 +37,7 @@ function reviewedIssue(key, rule, path, transition) {
 export const REVIEWED_ISSUES = Object.freeze([
   // Intentionally empty. Relay's manifest is NOT inherited: its exceptions
   // are bound to issue keys, rules, and components that do not exist here,
-  // and importing them would suppress real ShiftPrint findings. Any entry
+  // and importing them would suppress real ShiftPress findings. Any entry
   // added later must name the exact issue key, rule, and component, and
   // applies only on the integration branch.
 ]);
@@ -123,7 +123,7 @@ function sonarApiBase(hostUrl) {
   return base;
 }
 
-// ShiftPrint starts with zero reviewed exceptions. The exact-count guard is
+// ShiftPress starts with zero reviewed exceptions. The exact-count guard is
 // kept so the manifest cannot grow or shrink without a deliberate edit here.
 export const EXPECTED_REVIEWED_ISSUE_COUNT = 0;
 export const EXPECTED_REVIEWED_ACCEPT_COUNT = 0;

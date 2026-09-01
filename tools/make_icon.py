@@ -1,4 +1,4 @@
-"""Regenerate the ShiftPrint application icon.
+"""Regenerate the ShiftPress application icon.
 
 Geometry is expressed as a fraction of the canvas, so the mark is resolution
 independent. The values come from reading the mark at true 16px: a 0.020 gap

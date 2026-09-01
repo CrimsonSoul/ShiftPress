@@ -7,7 +7,7 @@ related_targets: ["src/main.py"]
 
 ## Scope and Mode
 
-- Surface: ShiftPrint main Tkinter window (`src/ui.py`)
+- Surface: ShiftPress main Tkinter window (`src/ui.py`)
 - Mode: Operate
 
 ## Audience and Job
@@ -27,7 +27,8 @@ remain visible. The manifest must state actual jobs and document counts.
 - Standard Tkinter/ttk widgets only.
 - Windows desktop, Microsoft Word COM, and physical printer workflow.
 - Preserve cancellation, progress, preflight, and failure reporting.
-- No custom Canvas controls, web effects, hidden tabs, or image-based widgets.
+- No custom-painted Canvas controls, web effects, hidden tabs, or image-based
+  widgets. A plain Canvas may provide native vertical overflow recovery.
 - Do not claim readiness before preflight succeeds.
 
 ## Chosen Direction
@@ -44,9 +45,10 @@ full-width manifest that says exactly what paper the button will produce.
 ## Resolved Decisions
 
 Window dimensions are no longer fixed tokens. Both date modes are built to the
-same height, and geometry and minimum size are derived from Tk's computed
-requirement at launch, so the layout cannot clip its primary action under any
-Windows text-scaling setting.
+same height, and geometry is derived from Tk's computed requirement at launch.
+When the rendered requirement exceeds the usable display, a native vertical
+scrollbar appears and keyboard focus reveals the active control, keeping the
+primary action reachable under Windows text scaling.
 
 Shift identity resolved to night-sky blue for Night and daylight amber for Day,
 matching the sun-and-moon reading an operator already carries.

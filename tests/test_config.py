@@ -217,7 +217,7 @@ class TestPreRenameMigration:
     """Config saved under the old ShiftPrint data directory must survive."""
 
     def test_migrates_config_from_pre_rename_data_dir(self, tmp_path):
-        """An operator upgrading from ShiftPrint keeps their saved setup."""
+        """An operator returning from ShiftPrint keeps their saved setup."""
         legacy_dir = tmp_path / "legacy"
         legacy_dir.mkdir()
         (legacy_dir / "config.json").write_text(
@@ -253,6 +253,32 @@ class TestPreRenameMigration:
 
         assert not legacy_file.exists()
         assert (legacy_dir / "config.json.migrated").exists()
+
+    def test_failed_migration_write_keeps_legacy_config_for_retry(
+        self, tmp_path, monkeypatch
+    ):
+        """A failed destination write must leave the recoverable source intact."""
+        legacy_dir = tmp_path / "legacy"
+        legacy_dir.mkdir()
+        legacy_file = legacy_dir / "config.json"
+        legacy_file.write_text(json.dumps({"day_folder": "/old/day"}))
+
+        manager = ConfigManager()
+        manager.config_path = tmp_path / "current" / "config.json"
+        manager._legacy_data_config_path = legacy_file
+        manager._legacy_config_path = tmp_path / "missing" / "config.json"
+        manager._allow_legacy_migration = True
+
+        def fail_save(config):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(manager, "save", fail_save)
+
+        config = manager.load()
+
+        assert config.day_folder == "/old/day"
+        assert legacy_file.exists()
+        assert not legacy_file.with_suffix(".json.migrated").exists()
 
     def test_existing_config_wins_over_pre_rename_one(self, tmp_path):
         """Migration must never overwrite a config the operator already has."""

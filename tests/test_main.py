@@ -12,7 +12,7 @@ import pytest
 
 # Import the class directly, then grab the actual module from sys.modules
 # (src.main as a name is shadowed by the main() function exported in src.__init__.py)
-from src.main import ShiftPrintApp, _BatchRequest
+from src.main import ShiftPressApp, _BatchRequest
 from src.print_manifest import PrintJob, ShiftSelection
 
 main_module = sys.modules["src.main"]
@@ -28,19 +28,27 @@ def _request(*jobs: PrintJob) -> _BatchRequest:
     )
 
 
-def _run_scheduled_callbacks(app: ShiftPrintApp) -> None:
+def _run_scheduled_callbacks(app: ShiftPressApp) -> None:
     """Execute callbacks captured by the mocked Tk root."""
     for call in app.root.after.call_args_list:
         callback = call.args[1]
         callback()
 
 
-class TestShiftPrintApp:
-    """Tests for ShiftPrintApp class."""
+def test_batch_stop_status_preserves_completed_progress_language() -> None:
+    """The extracted batch error copy must preserve zero and partial outcomes."""
+    status_for = getattr(main_module, "_batch_stop_status", None)
+    assert callable(status_for)
+    assert status_for(0, 2) == "Printing stopped before any schedules were completed"
+    assert status_for(1, 2) == "Printing stopped after 1 of 2 schedules"
+
+
+class TestShiftPressApp:
+    """Tests for ShiftPressApp class."""
 
     @pytest.fixture
     def app(self):
-        """Create a ShiftPrintApp with mocked UI and dependencies."""
+        """Create a ShiftPressApp with mocked UI and dependencies."""
         with patch.object(main_module, "ScheduleAppUI") as MockUI, patch.object(
             main_module, "ConfigManager"
         ) as MockConfig:
@@ -77,7 +85,7 @@ class TestShiftPrintApp:
                 day_folder="", night_folder="", printer_name=""
             )
 
-            app = ShiftPrintApp(mock_root)
+            app = ShiftPressApp(mock_root)
             yield app
 
     def test_validate_inputs_missing_day_folder(self, app):
@@ -246,11 +254,17 @@ class TestShiftPrintApp:
         ]
         app.ui.show_info.assert_called_once_with(
             "Success",
-            "All 2 selected schedules have been processed and sent to the printer.",
+            "All 2 schedules were sent to the printer.",
         )
-        status_messages = [call.args[0] for call in app.ui.update_status.call_args_list]
-        assert any("(1/2)" in message for message in status_messages)
-        assert any("(2/2)" in message for message in status_messages)
+        app.ui.update_status.assert_any_call(
+            "All 2 schedules sent to printer", 100, level="success"
+        )
+        progress_updates = [
+            call.args[1]
+            for call in app.ui.update_status.call_args_list
+            if call.args and call.args[0].startswith(("Printing", "Finished"))
+        ]
+        assert progress_updates == [0, 50, 50, 100]
 
     @patch.object(main_module, "WordProcessor")
     def test_process_batch_cancel_before_first_job(self, mock_wp_class, app):
@@ -306,8 +320,12 @@ class TestShiftPrintApp:
         )
 
         app._process_batch(request)
+        _run_scheduled_callbacks(app)
 
         assert mock_wp.print_document.call_count == 1
+        app.ui.update_status.assert_any_call(
+            "Cancelled after 1 of 2 schedules", 50, level="info"
+        )
 
     def test_on_close_without_active_thread(self, app):
         """Should destroy window immediately if no thread is running."""
@@ -337,6 +355,9 @@ class TestShiftPrintApp:
 
         assert app._cancel_event.is_set()
         app.ui.set_print_button_state.assert_called_with("disabled")
+        app.ui.update_status.assert_called_with(
+            "Stopping after current document...", 0.0, level="info"
+        )
 
     def test_cancel_if_running_noop_when_idle(self, app):
         """_cancel_if_running should do nothing when no thread is running."""
@@ -369,6 +390,22 @@ class TestShiftPrintApp:
 
         assert app._cancel_event.is_set()
         app.ui.set_print_button_state.assert_called_with("disabled")
+
+    def test_start_processing_shows_preflight_before_validation(self, app):
+        """Potentially slow validation should begin with immediate visible feedback."""
+
+        def validate_after_status():
+            app.ui.update_status.assert_called_with(
+                "Checking setup and templates…", 0, level="info"
+            )
+            return None, "Choose a printer"
+
+        with patch.object(app, "_validate_inputs", side_effect=validate_after_status):
+            app.start_processing()
+
+        app.ui.update_status.assert_called_with(
+            "Cannot print: Choose a printer", 0, level="error"
+        )
 
     @patch.object(main_module, "WordProcessor")
     def test_process_batch_tracks_failures_with_summary(self, mock_wp_class, app):
@@ -407,6 +444,13 @@ class TestShiftPrintApp:
             assert failures[0]["shift"] == "night"
             assert "Template not found" in failures[0]["error"]
             assert mock_wp.print_document.call_count == 2
+            app.ui.update_status.assert_any_call(
+                "Completed with 1 failed schedule", 100, level="error"
+            )
+            assert not any(
+                call.kwargs.get("level") == "success"
+                for call in app.ui.update_status.call_args_list
+            )
 
     def test_write_failure_report_creates_csv(self, app, tmp_path):
         """_write_failure_report should create a CSV with correct headers."""
@@ -577,11 +621,64 @@ class TestShiftPrintApp:
         app.ui.refresh_setup_summary.assert_called_once()
 
     def test_load_config_exception_shows_warning(self, app):
-        """_load_config should show warning on load failure."""
+        """A load failure should give recovery guidance without raw diagnostics."""
         app.config_manager.load.side_effect = IOError("Corrupted")
         app._load_config()
-        app.ui.show_warning.assert_called_once()
-        assert "Corrupted" in app.ui.show_warning.call_args[0][1]
+        app.ui.show_warning.assert_called_once_with(
+            "Setup could not be loaded",
+            "Open Setup, confirm both template folders and the printer, then select "
+            "Apply. No schedules have been sent to print.",
+        )
+        assert "Corrupted" not in app.ui.show_warning.call_args[0][1]
+
+    def test_save_config_reports_failure_to_its_caller(self, app):
+        """Persistence failures should be recoverable by the UI boundary."""
+        app.config_manager.save.side_effect = OSError("Disk full")
+
+        saved = app._save_config(MagicMock())
+
+        assert saved is False
+
+    @patch.object(main_module, "WordProcessor")
+    def test_process_batch_warns_when_setup_cannot_be_saved(self, mock_wp_class, app):
+        """Printing may continue, but stale-next-launch risk must be visible."""
+        mock_wp = MagicMock()
+        mock_wp.__enter__ = MagicMock(return_value=mock_wp)
+        mock_wp.__exit__ = MagicMock(return_value=False)
+        mock_wp.print_document.return_value = (True, None)
+        mock_wp_class.return_value = mock_wp
+        app._save_config = MagicMock(return_value=False)
+        request = _request(
+            PrintJob(
+                date=date(2026, 1, 14),
+                shift_type="night",
+                template_name="Wednesday Night",
+                folder="/tmp/night",
+            )
+        )
+
+        app._process_batch(request)
+        _run_scheduled_callbacks(app)
+
+        app.ui.show_warning.assert_any_call(
+            "Setup was not saved",
+            "This print run can continue, but these folders and printer may not "
+            "be restored next time. If this repeats, select Open logs and contact "
+            "support.",
+        )
+
+    def test_close_warns_when_setup_cannot_be_saved(self, app):
+        """Closing must disclose that current Setup values may be lost."""
+        app._save_config = MagicMock(return_value=False)
+
+        app._on_close()
+
+        app.ui.show_warning.assert_called_with(
+            "Setup was not saved",
+            "These folders and printer may not be restored next time. Review the "
+            "application logs if this repeats.",
+        )
+        app.root.destroy.assert_called_once()
 
     def test_show_failure_summary_message_format(self, app, tmp_path):
         """_show_failure_summary should format failures and truncate at MAX_FAILURE_SUMMARY_SHOWN."""
@@ -643,6 +740,15 @@ class TestShiftPrintApp:
         # Print button should be re-enabled
         app.ui.set_print_button_state.assert_called_with("normal")
         app.ui.set_processing_mode.assert_called_with(False)
+        app.ui.update_status.assert_any_call(
+            "Printing stopped before any schedules were completed", 0, level="error"
+        )
+        app.ui.show_error.assert_called_with(
+            "Printing stopped",
+            "Review the selected printer and template folders, then try again. "
+            "If the problem repeats, select Open logs and contact support.",
+        )
+        assert "COM catastrophe" not in app.ui.show_error.call_args.args[1]
 
     @patch.object(main_module, "WordProcessor")
     def test_process_batch_saves_configuration_and_consumes_preflight_cache(
@@ -736,6 +842,9 @@ class TestShiftPrintApp:
         assert title == "Large Batch Confirm"
         assert "30 selected schedules" in message
         MockThread.assert_not_called()
+        app.ui.update_status.assert_called_with(
+            "Cancelled before printing", 0, level="info"
+        )
 
     def test_show_failure_summary_with_none_report_path(self, app, tmp_path):
         """_show_failure_summary should handle report_path=None gracefully."""

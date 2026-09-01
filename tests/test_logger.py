@@ -49,7 +49,7 @@ class TestSetupLogging:
         setup_logging(log_dir=str(tmp_path))
         log_files = list(tmp_path.glob("*.log"))
         assert len(log_files) == 1
-        assert log_files[0].name == "shiftprint.log"
+        assert log_files[0].name == "shiftpress.log"
 
     def test_custom_log_filename(self, tmp_path):
         """Should use a custom log filename when specified."""
@@ -78,7 +78,7 @@ class TestSetupLogging:
 
         setup_logging(log_dir=str(tmp_path))
         # Our 2 tagged handlers are added; the third-party handler survives.
-        tagged = [h for h in root.handlers if getattr(h, "_shiftprint", False)]
+        tagged = [h for h in root.handlers if getattr(h, "_shiftpress", False)]
         assert len(tagged) == 2
         assert third_party in root.handlers
         root.removeHandler(third_party)
@@ -105,14 +105,14 @@ class TestGetLogger:
         assert logger.name == "test.module"
 
     def test_default_name(self):
-        """Should return 'shiftprint' when no name provided."""
+        """Should return 'shiftpress' when no name provided."""
         logger = get_logger()
-        assert logger.name == "shiftprint"
+        assert logger.name == "shiftpress"
 
     def test_none_name(self):
-        """Should return 'shiftprint' when name is None."""
+        """Should return 'shiftpress' when name is None."""
         logger = get_logger(None)
-        assert logger.name == "shiftprint"
+        assert logger.name == "shiftpress"
 
 
 class TestSetupLoggingIdempotency:
@@ -124,18 +124,18 @@ class TestSetupLoggingIdempotency:
 
         # Record third-party handlers before our test
         pre_existing = len(
-            [h for h in root.handlers if not getattr(h, "_shiftprint", False)]
+            [h for h in root.handlers if not getattr(h, "_shiftpress", False)]
         )
 
         setup_logging(log_dir=str(tmp_path))
         tagged_after_first = [
-            h for h in root.handlers if getattr(h, "_shiftprint", False)
+            h for h in root.handlers if getattr(h, "_shiftpress", False)
         ]
         count_first = len(tagged_after_first)
 
         setup_logging(log_dir=str(tmp_path))
         tagged_after_second = [
-            h for h in root.handlers if getattr(h, "_shiftprint", False)
+            h for h in root.handlers if getattr(h, "_shiftpress", False)
         ]
         count_second = len(tagged_after_second)
 
@@ -145,6 +145,6 @@ class TestSetupLoggingIdempotency:
 
         # Third-party handlers should be untouched
         third_party_after = len(
-            [h for h in root.handlers if not getattr(h, "_shiftprint", False)]
+            [h for h in root.handlers if not getattr(h, "_shiftpress", False)]
         )
         assert third_party_after == pre_existing
