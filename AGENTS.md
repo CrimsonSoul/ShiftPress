@@ -60,8 +60,12 @@ printer. Approved UI references live in `.impeccable/`.
 - Finish with only local `main`, zero divergence from `origin/main`, and the
   temporary remote PR branch deleted after confirmed merge. Verify each merged
   `main` push produces its Windows artifact.
-- Releases additionally require completed Windows smoke evidence, a committed
-  version bump in `src/__init__.py` (the sole version source), and explicit
+- Releases additionally require successful packaged Windows startup evidence
+  for the exact merged commit, a committed version bump in `src/__init__.py`
+  (the sole version source), and explicit
   user authorization for a Build dispatch on `main` with `create_release`
   enabled. Never hand-enter a separate workflow version or dispatch a release
-  from an unverified/uncommitted version.
+  from an unverified/uncommitted version. Word/physical-printer testing is
+  separate: complete the Windows checklist before claiming print verification.
+  Its unavailability does not block publication, but must be disclosed in the
+  release notes. Known printing failures still block release.

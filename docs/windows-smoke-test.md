@@ -1,9 +1,11 @@
 # Windows Print Smoke Test
 
-Before release, run this checklist on Windows with Microsoft Word, the intended
-physical printer, representative Day/Night template folders, and the release
-candidate executable (or Python 3.12 via `start_app.bat`). Automated tests and
-packaged startup checks do not establish physical printing.
+To verify real printing, run this checklist on Windows with Microsoft Word,
+the intended physical printer, representative Day/Night template folders, and
+the release candidate executable (or Python 3.12 via `start_app.bat` for source
+testing). Automated tests and packaged startup checks do not establish physical
+printing. [AGENTS.md](../AGENTS.md) owns the separate publication requirements;
+record unavailable print validation honestly rather than treating it as passed.
 
 ## Preparation
 
