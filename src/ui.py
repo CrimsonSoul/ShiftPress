@@ -67,11 +67,14 @@ _PATH_PLACEHOLDER = "Click Browse to select folder\u2026"
 # Reused Tk style and tkcalendar tokens. Keeping these names centralized avoids
 # accidental drift between style definitions and widget construction.
 _STYLE_CARD_FRAME = "Card.TFrame"
+_STYLE_CARD_LABEL = "Card.TLabel"
 _STYLE_CARD_SUB_LABEL = "CardSub.TLabel"
 _STYLE_TERTIARY_BUTTON = "Tertiary.TButton"
 _STYLE_PRIMARY_BUTTON = "Primary.TButton"
 _STYLE_DANGER_BUTTON = "Danger.TButton"
 _STYLE_HEADER_LABEL = "Header.TLabel"
+_STYLE_HEADER_FRAME = "Header.TFrame"
+_STYLE_HEADER_SUB_LABEL = "HeaderSub.TLabel"
 _STYLE_SUB_LABEL = "Sub.TLabel"
 _STYLE_COUNT_SELECTED_LABEL = "CountSelected.TLabel"
 _STYLE_SUCCESS_LABEL = "Success.TLabel"
@@ -82,7 +85,9 @@ _DATE_ENTRY_SELECTED_EVENT = "<<DateEntrySelected>>"
 _DATE_PATTERN = "mm/dd/yyyy"
 _FOCUS_IN_EVENT = "<FocusIn>"
 _CONFIGURE_EVENT = "<Configure>"
+_ESCAPE_EVENT = "<Escape>"
 _PRINT_BUTTON_LABEL = "Print schedules"
+_NOT_CONFIGURED_LABEL = "Not configured"
 
 
 def _status_style(
@@ -352,12 +357,14 @@ class ScheduleAppUI:
         self.theme_var.set(selected.title())
         self.colors = THEMES[selected]
         self._configure_styles()
-        self.root.configure(bg=self.colors.background)
-        for canvas in (self._main_canvas, self._setup_canvas):
-            if canvas is not None:
-                canvas.configure(background=self.colors.background)
-        if self._setup_dialog is not None:
-            self._setup_dialog.configure(bg=self.colors.background)
+        for widget in (
+            self.root,
+            self._main_canvas,
+            self._setup_canvas,
+            self._setup_dialog,
+        ):
+            if widget is not None:
+                widget.configure(background=self.colors.background)
         for shift, panel in self._shift_panels.items():
             accent = (
                 self.colors.night_accent if shift == "night" else self.colors.day_accent
@@ -369,13 +376,14 @@ class ScheduleAppUI:
             ):
                 picker.configure(**self._calendar_kwargs(accent))
         for entry in (self.day_entry, self.night_entry):
-            if entry is not None:
-                color = (
-                    self.colors.text_dim
-                    if entry.get() == _PATH_PLACEHOLDER
-                    else self.colors.text_main
-                )
-                entry.configure(foreground=color)
+            if entry is None:
+                continue
+            color = (
+                self.colors.text_dim
+                if entry.get() == _PATH_PLACEHOLDER
+                else self.colors.text_main
+            )
+            entry.configure(foreground=color)
         self._style_printer_menu()
         self._style_theme_menu()
         self._style_help_dialog()
@@ -426,7 +434,7 @@ class ScheduleAppUI:
             font=FONTS.main,
         )
         self.style.configure(_STYLE_CARD_FRAME, background=self.colors.surface)
-        self.style.configure("Header.TFrame", background=self.colors.header)
+        self.style.configure(_STYLE_HEADER_FRAME, background=self.colors.header)
         self.style.configure(
             "Brand.TLabel",
             background=self.colors.header,
@@ -434,7 +442,7 @@ class ScheduleAppUI:
             font=FONTS.brand,
         )
         self.style.configure(
-            "HeaderSub.TLabel",
+            _STYLE_HEADER_SUB_LABEL,
             background=self.colors.header,
             foreground=self.colors.action,
             font=FONTS.main,
@@ -452,7 +460,7 @@ class ScheduleAppUI:
             font=FONTS.main,
         )
         self.style.configure(
-            "Card.TLabel",
+            _STYLE_CARD_LABEL,
             background=self.colors.surface,
             foreground=self.colors.text_main,
             font=FONTS.main,
@@ -1121,20 +1129,22 @@ class ScheduleAppUI:
     def _create_header(self, parent: ttk.Frame) -> None:
         """Give the workspace its identity, dark palette selection, and help."""
         header_row = ttk.Frame(
-            parent, style="Header.TFrame", padding=(self._px(28), self._gap(18))
+            parent, style=_STYLE_HEADER_FRAME, padding=(self._px(28), self._gap(18))
         )
         header_row.pack(fill="x")
-        brand = ttk.Frame(header_row, style="Header.TFrame")
+        brand = ttk.Frame(header_row, style=_STYLE_HEADER_FRAME)
         brand.pack(side="left")
         ttk.Label(brand, text="ShiftPress", style="Brand.TLabel").pack(anchor="w")
         ttk.Label(
-            brand, text="Schedules, ready for the next shift.", style="HeaderSub.TLabel"
+            brand,
+            text="Schedules, ready for the next shift.",
+            style=_STYLE_HEADER_SUB_LABEL,
         ).pack(anchor="w", pady=self._spacing(2, 0))
         version = _get_version()
         if version:
-            ttk.Label(header_row, text=f"v{version}", style="HeaderSub.TLabel").pack(
-                side="right", padx=self._spacing(24, 0)
-            )
+            ttk.Label(
+                header_row, text=f"v{version}", style=_STYLE_HEADER_SUB_LABEL
+            ).pack(side="right", padx=self._spacing(24, 0))
         self._help_button = ttk.Button(
             header_row,
             text="How to use",
@@ -1162,7 +1172,7 @@ class ScheduleAppUI:
         self._theme_picker.configure(menu=self._theme_menu)
         self._style_theme_menu()
         self._theme_picker.pack(side="right")
-        ttk.Label(header_row, text="Theme", style="HeaderSub.TLabel").pack(
+        ttk.Label(header_row, text="Theme", style=_STYLE_HEADER_SUB_LABEL).pack(
             side="right", padx=self._spacing(16, 10)
         )
 
@@ -1232,12 +1242,12 @@ class ScheduleAppUI:
             card.grid_columnconfigure(column, weight=1, uniform="setup")
             group = ttk.Frame(card, style=_STYLE_CARD_FRAME)
             group.grid(row=1, column=column, sticky="nsew", padx=self._spacing(0, 18))
-            ttk.Label(group, text=title, style="Card.TLabel").pack(
+            ttk.Label(group, text=title, style=_STYLE_CARD_LABEL).pack(
                 anchor="w", pady=self._spacing(0, 6)
             )
             value = ttk.Label(
                 group,
-                text="Not configured",
+                text=_NOT_CONFIGURED_LABEL,
                 style="SetupValue.TLabel",
                 wraplength=self._px(240),
                 justify="left",
@@ -1267,7 +1277,7 @@ class ScheduleAppUI:
         dialog.configure(bg=self.colors.background)
         dialog.resizable(True, True)
         dialog.protocol("WM_DELETE_WINDOW", self._cancel_setup_dialog)
-        dialog.bind("<Escape>", lambda _event: self._cancel_setup_dialog())
+        dialog.bind(_ESCAPE_EVENT, lambda _event: self._cancel_setup_dialog())
 
         viewport = ttk.Frame(dialog)
         viewport.pack(fill="both", expand=True)
@@ -1482,10 +1492,10 @@ class ScheduleAppUI:
     def _folder_tail(folder: str) -> str:
         """Return a compact, recognizable two-part folder identity."""
         if not isinstance(folder, str):
-            return "Not configured"
+            return _NOT_CONFIGURED_LABEL
         value = folder.strip().rstrip("/\\")
         if not value or value == _PATH_PLACEHOLDER:
-            return "Not configured"
+            return _NOT_CONFIGURED_LABEL
         parts = [part for part in re.split(r"[/\\]+", value) if part]
         if not parts:
             return value
@@ -1837,7 +1847,7 @@ class ScheduleAppUI:
         self._manifest_printer_label = ttk.Label(
             card,
             text="Printer\nChoose a printer",
-            style="Card.TLabel",
+            style=_STYLE_CARD_LABEL,
             justify="left",
             wraplength=self._px(280),
         )
@@ -2440,7 +2450,7 @@ class ScheduleAppUI:
             self.print_btn.bind("<Return>", lambda _event: command())
             self.root.bind("<Alt-p>", lambda _event: command())
         if cancel_command is not None:
-            self.root.bind("<Escape>", lambda _event: cancel_command())
+            self.root.bind(_ESCAPE_EVENT, lambda _event: cancel_command())
 
     def set_inputs_enabled(self, enabled: bool) -> None:
         """Enable or disable all input widgets during processing.
@@ -2616,7 +2626,7 @@ class ScheduleAppUI:
         dialog.title("How to use ShiftPress")
         dialog.transient(self.root)
         dialog.protocol("WM_DELETE_WINDOW", self._hide_help_dialog)
-        dialog.bind("<Escape>", lambda _event: self._hide_help_dialog())
+        dialog.bind(_ESCAPE_EVENT, lambda _event: self._hide_help_dialog())
         actions = ttk.Frame(dialog, padding=self._spacing(24, 12))
         actions.pack(side="bottom", fill="x")
         ttk.Button(

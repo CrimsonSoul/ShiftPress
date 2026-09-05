@@ -926,6 +926,68 @@ class TestScheduleAppUI:
         assert "<Alt-s>" in bound_keys
         assert "<Alt-h>" in bound_keys
 
+    @pytest.mark.parametrize(
+        "work_height,window_height,text_height,expected_height",
+        [(1000, 610, 550, 456), (350, 286, 226, 286)],
+    )
+    def test_help_sizes_measured_text_within_work_area_and_preserves_scope(
+        self, ui, work_height, window_height, text_height, expected_height
+    ):
+        """Fixed-height help or an ignored work-area cap must fail this check."""
+        dialog = MagicMock()
+        dialog.winfo_id.return_value = 0
+        dialog.winfo_height.return_value = window_height
+        ui._test_toplevel_class.return_value = dialog
+        ui._test_toplevel_class.reset_mock()
+        ui.root.winfo_rootx.return_value = 100
+        ui.root.winfo_rooty.return_value = 50
+        selections = ui.get_shift_selections()
+        ui.set_inputs_enabled(False)
+        with patch("src.ui.tk.Text") as text_class, patch(
+            "src.ui._get_work_area", return_value=(0, 0, 1400, work_height)
+        ):
+            text = text_class.return_value
+            text.count.return_value = 380
+            text.cget.return_value = 4
+            text.winfo_height.return_value = text_height
+            ui.show_help()
+            # Bottom positioning reserves 48px of frame/work-area space.
+            expected_y = 74 if work_height == 1000 else 16
+            dialog.geometry.assert_called_with(
+                f"640x{expected_height}+148+{expected_y}"
+            )
+            text.count.assert_called_with("1.0", "end", "update", "ypixels")
+            text.configure.assert_any_call(state="disabled")
+            assert ui.get_shift_selections() == selections
+            assert ui._inputs_enabled is False
+            ui._hide_help_dialog()
+            dialog.withdraw.assert_called()
+            ui.show_help()
+            text_class.assert_called_once()
+            ui._test_toplevel_class.assert_called_once()
+
+    def test_help_scrollbar_tracks_overflow_and_theme_updates_open_help(self, ui):
+        """Overflow recovery and palette changes must reach an existing Help view."""
+        with patch("src.ui.tk.Text") as text_class:
+            ui._create_help_dialog()
+            text = text_class.return_value
+            sync = next(
+                call.kwargs["yscrollcommand"]
+                for call in text.configure.call_args_list
+                if "yscrollcommand" in call.kwargs
+            )
+            scrollbar = ui._test_scrollbar_class.return_value
+            scrollbar.reset_mock()
+            sync("0.0", "1.0")
+            scrollbar.pack_forget.assert_called_once()
+            sync("0.0", "0.5")
+            scrollbar.pack.assert_called_once()
+            scrollbar.set.assert_called_with(0.0, 0.5)
+            ui.set_theme("rose")
+            assert text.configure.call_args.kwargs["background"] == "#15131B"
+            assert text.configure.call_args.kwargs["foreground"] == "#F8F3F8"
+            text.tag_configure.assert_any_call("heading", foreground=ui.colors.action)
+
     def test_setup_button_mnemonic_matches_alt_s_shortcut(self, ui):
         """The visible Setup mnemonic must match the documented Alt+S binding."""
         setup_calls = [

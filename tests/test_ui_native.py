@@ -165,11 +165,14 @@ def test_help_retains_scrolling_and_close_on_short_work_areas(tk_runtime):
     try:
         ui = ScheduleAppUI(root)
         root.update()
-        with patch("src.ui._get_work_area", return_value=(0, 0, 1400, 700)):
+        # Constrain design-space height, not raw pixels: 700px can fit all
+        # content at 100% scaling even though it overflows at 200%.
+        work_height = ui._px(360)
+        with patch("src.ui._get_work_area", return_value=(0, 0, 1400, work_height)):
             ui.show_help()
         root.update()
         dialog = ui._help_dialog
-        assert dialog.winfo_height() <= 700 - ui._px(64)
+        assert dialog.winfo_height() <= work_height - ui._px(64)
         assert ui._help_text.yview()[1] < 1
         ui._help_text.yview_moveto(1)
         root.update()
