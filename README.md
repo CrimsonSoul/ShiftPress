@@ -36,8 +36,10 @@ ambiguous templates block preflight. Failed documents receive CSV reports.
 
 Install `requirements-dev.txt` for development. [AGENTS.md](AGENTS.md) owns
 verification commands and protected publication/release rules. Non-Windows
-tests mock Windows dependencies; real Word COM and physical printing require
-the [Windows smoke test](docs/windows-smoke-test.md) before release.
+tests mock Windows dependencies. Packaged Windows startup is required for
+release; real Word COM and physical printing remain unverified until the
+[Windows smoke test](docs/windows-smoke-test.md) passes. Release notes disclose
+any unavailable physical-print validation.
 
 Each merged `main` push produces a PyInstaller executable artifact named
 `ShiftPress-v<version>-<commit>`, retained for seven days. Release versions come
