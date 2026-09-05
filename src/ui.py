@@ -21,7 +21,7 @@ try:
 except Exception:  # pragma: no cover
     DateEntry = None
 
-from typing import Optional, Callable, Literal, Any, cast
+from typing import Optional, Callable, Literal, Any, cast, overload
 
 try:
     import win32print  # type: ignore
@@ -30,6 +30,7 @@ except Exception:  # pragma: no cover
 
 from .constants import (
     COLORS,
+    THEMES,
     FONTS,
     WINDOW_WIDTH,
     WINDOW_RESIZABLE,
@@ -66,11 +67,14 @@ _PATH_PLACEHOLDER = "Click Browse to select folder\u2026"
 # Reused Tk style and tkcalendar tokens. Keeping these names centralized avoids
 # accidental drift between style definitions and widget construction.
 _STYLE_CARD_FRAME = "Card.TFrame"
+_STYLE_CARD_LABEL = "Card.TLabel"
 _STYLE_CARD_SUB_LABEL = "CardSub.TLabel"
 _STYLE_TERTIARY_BUTTON = "Tertiary.TButton"
 _STYLE_PRIMARY_BUTTON = "Primary.TButton"
 _STYLE_DANGER_BUTTON = "Danger.TButton"
 _STYLE_HEADER_LABEL = "Header.TLabel"
+_STYLE_HEADER_FRAME = "Header.TFrame"
+_STYLE_HEADER_SUB_LABEL = "HeaderSub.TLabel"
 _STYLE_SUB_LABEL = "Sub.TLabel"
 _STYLE_COUNT_SELECTED_LABEL = "CountSelected.TLabel"
 _STYLE_SUCCESS_LABEL = "Success.TLabel"
@@ -81,7 +85,9 @@ _DATE_ENTRY_SELECTED_EVENT = "<<DateEntrySelected>>"
 _DATE_PATTERN = "mm/dd/yyyy"
 _FOCUS_IN_EVENT = "<FocusIn>"
 _CONFIGURE_EVENT = "<Configure>"
+_ESCAPE_EVENT = "<Escape>"
 _PRINT_BUTTON_LABEL = "Print schedules"
+_NOT_CONFIGURED_LABEL = "Not configured"
 
 
 def _status_style(
@@ -130,6 +136,20 @@ def _manifest_blocker(
     if printer_label == "Choose a printer":
         return "Choose a printer in Setup"
     return None
+
+
+def configure_windows_dpi() -> None:
+    """Use sharp system-DPI rendering; call before constructing the Tk root."""
+    if sys.platform != "win32":
+        return
+    try:
+        # System-aware (-2) suits Tk's fixed point scaling. A packaged manifest
+        # may already set awareness, in which case Windows keeps that setting.
+        getattr(ctypes, "windll").user32.SetProcessDpiAwarenessContext(
+            ctypes.c_void_p(-2)
+        )
+    except (AttributeError, OSError):
+        logger.debug("Windows DPI configuration unavailable", exc_info=True)
 
 
 def _get_work_area(window: tk.Misc) -> tuple[int, int, int, int]:
@@ -227,9 +247,18 @@ class ScheduleAppUI:
             today: Optional deterministic date used for launch defaults.
         """
         self.root = root
+        self._scale = (
+            max(1.0, float(root.winfo_fpixels("1i")) / 96)
+            if sys.platform == "win32"
+            else 1.0
+        )
+        _, work_top, _, work_bottom = _get_work_area(root)
+        self._compact_layout = work_bottom - work_top < self._px(960)
+        self.colors = COLORS
+        self.theme_var = tk.StringVar(value="Midnight")
         self.root.title("ShiftPress")
         self.root.resizable(WINDOW_RESIZABLE, WINDOW_RESIZABLE)
-        self.root.configure(bg=COLORS.background)
+        self.root.configure(bg=self.colors.background)
         self._today = today or date.today()
         self._inputs_enabled = True
         self._dependency_error: Optional[str] = None
@@ -246,7 +275,13 @@ class ScheduleAppUI:
         self.day_entry: Optional[ttk.Entry] = None
         self.night_entry: Optional[ttk.Entry] = None
         self.printer_var: Optional[tk.StringVar] = None
-        self.setup_summary_label: Optional[ttk.Label] = None
+        self._setup_values: dict[str, ttk.Label] = {}
+        self._theme_picker: Optional[ttk.Menubutton] = None
+        self._theme_menu: Optional[tk.Menu] = None
+        self._help_dialog: Optional[tk.Toplevel] = None
+        self._help_text: Optional[tk.Text] = None
+        self._help_button: Optional[ttk.Button] = None
+        self._manifest_printer_label: Optional[ttk.Label] = None
         self._setup_details: Optional[ttk.Frame] = None
         self._setup_dialog: Optional[tk.Toplevel] = None
         self._setup_canvas: Optional[tk.Canvas] = None
@@ -255,6 +290,7 @@ class ScheduleAppUI:
         self._setup_scrollbar: Optional[ttk.Scrollbar] = None
         self._setup_snapshot: Optional[tuple[str, str, str]] = None
         self._setup_toggle_btn: Optional[ttk.Button] = None
+        self._reset_btn: Optional[ttk.Button] = None
         self._manifest_card: Optional[ttk.Frame] = None
         self._footer_frame: Optional[ttk.Frame] = None
         self._logs_btn: Optional[ttk.Button] = None
@@ -287,310 +323,540 @@ class ScheduleAppUI:
 
         # Center the window on screen after final sizing.
         self._center_window()
+        self._style_titlebar(self.root)
 
         logger.info("UI initialized")
+
+    def get_theme(self) -> str:
+        """Return the persisted identifier of the selected dark palette."""
+        return self.theme_var.get().lower()
+
+    def _px(self, value: int) -> int:
+        """Scale layout pixels alongside Windows' native point-sized text."""
+        return round(value * self._scale)
+
+    def _gap(self, value: int) -> int:
+        """Use less vertical whitespace on short work areas, never smaller text."""
+        return self._px(round(value * 0.65) if self._compact_layout else value)
+
+    @overload
+    def _spacing(self, first: int, second: int, /) -> tuple[int, int]: ...
+
+    @overload
+    def _spacing(
+        self, first: int, second: int, third: int, fourth: int, /
+    ) -> tuple[int, int, int, int]: ...
+
+    def _spacing(self, *values: int) -> tuple[int, ...]:
+        """Scale native pack/grid/style spacing using the same design units."""
+        return tuple(self._px(value) for value in values)
+
+    def set_theme(self, theme: str) -> None:
+        """Restyle existing controls without changing dates, focus, or run state."""
+        selected = theme if theme in THEMES else "midnight"
+        self.theme_var.set(selected.title())
+        self.colors = THEMES[selected]
+        self._configure_styles()
+        for widget in (
+            self.root,
+            self._main_canvas,
+            self._setup_canvas,
+            self._setup_dialog,
+        ):
+            if widget is not None:
+                widget.configure(background=self.colors.background)
+        for shift, panel in self._shift_panels.items():
+            accent = (
+                self.colors.night_accent if shift == "night" else self.colors.day_accent
+            )
+            for picker in (
+                panel.single_picker,
+                panel.range_start_picker,
+                panel.range_end_picker,
+            ):
+                picker.configure(**self._calendar_kwargs(accent))
+        for entry in (self.day_entry, self.night_entry):
+            if entry is None:
+                continue
+            color = (
+                self.colors.text_dim
+                if entry.get() == _PATH_PLACEHOLDER
+                else self.colors.text_main
+            )
+            entry.configure(foreground=color)
+        self._style_printer_menu()
+        self._style_theme_menu()
+        self._style_help_dialog()
+        self._style_titlebar(self.root)
+        if self._setup_dialog is not None:
+            self._style_titlebar(self._setup_dialog)
+
+    def _style_titlebar(self, window: tk.Tk | tk.Toplevel) -> None:
+        """Keep Windows captions dark independently of the system color theme."""
+        if sys.platform != "win32":
+            return
+        try:
+            window.update_idletasks()
+            dlls = getattr(ctypes, "windll")
+            get_parent = dlls.user32.GetParent
+            get_parent.argtypes = [wintypes.HWND]
+            get_parent.restype = wintypes.HWND
+            handle = get_parent(window.winfo_id())
+            setter = dlls.dwmapi.DwmSetWindowAttribute
+            setter.argtypes = [
+                wintypes.HWND,
+                wintypes.DWORD,
+                ctypes.c_void_p,
+                wintypes.DWORD,
+            ]
+            dark = wintypes.BOOL(1)
+            setter(handle, 20, ctypes.byref(dark), ctypes.sizeof(dark))
+            # Explicit caption/text colors cover Windows 11 even in OS light
+            # mode. Older versions ignore unsupported attributes safely.
+            for attribute, color in (
+                (35, self.colors.header),
+                (36, self.colors.text_main),
+            ):
+                rgb = color[1:]
+                value = wintypes.DWORD(int(rgb[4:6] + rgb[2:4] + rgb[0:2], 16))
+                setter(handle, attribute, ctypes.byref(value), ctypes.sizeof(value))
+        except (AttributeError, OSError):
+            logger.debug("Native dark caption unavailable", exc_info=True)
 
     def _configure_styles(self) -> None:
         """Configure ttk styles for the application."""
         # Base frame
-        self.style.configure("TFrame", background=COLORS.background)
+        self.style.configure("TFrame", background=self.colors.background)
         self.style.configure(
             "TLabel",
-            background=COLORS.background,
-            foreground=COLORS.text_main,
+            background=self.colors.background,
+            foreground=self.colors.text_main,
             font=FONTS.main,
         )
-        self.style.configure(_STYLE_CARD_FRAME, background=COLORS.surface)
+        self.style.configure(_STYLE_CARD_FRAME, background=self.colors.surface)
+        self.style.configure(_STYLE_HEADER_FRAME, background=self.colors.header)
         self.style.configure(
-            "Card.TLabel",
-            background=COLORS.surface,
-            foreground=COLORS.text_main,
+            "Brand.TLabel",
+            background=self.colors.header,
+            foreground=self.colors.text_main,
+            font=FONTS.brand,
+        )
+        self.style.configure(
+            _STYLE_HEADER_SUB_LABEL,
+            background=self.colors.header,
+            foreground=self.colors.action,
+            font=FONTS.main,
+        )
+        self.style.configure(
+            "Section.TLabel",
+            background=self.colors.background,
+            foreground=self.colors.text_main,
+            font=FONTS.section,
+        )
+        self.style.configure(
+            "SetupValue.TLabel",
+            background=self.colors.surface,
+            foreground=self.colors.action,
+            font=FONTS.main,
+        )
+        self.style.configure(
+            _STYLE_CARD_LABEL,
+            background=self.colors.surface,
+            foreground=self.colors.text_main,
             font=FONTS.main,
         )
         self.style.configure(
             _STYLE_CARD_SUB_LABEL,
-            background=COLORS.surface,
-            foreground=COLORS.text_dim,
+            background=self.colors.surface,
+            foreground=self.colors.text_dim,
             font=FONTS.sub,
         )
 
         # Native card shells avoid LabelFrame's platform-specific title patches.
         for style_name, border_color in (
-            ("SetupCard.TFrame", COLORS.border),
-            ("NightCard.TFrame", COLORS.night_accent),
-            ("DayCard.TFrame", COLORS.day_accent),
-            ("Manifest.TFrame", COLORS.border),
-            ("DialogCard.TFrame", COLORS.border),
+            ("SetupCard.TFrame", self.colors.border),
+            ("NightCard.TFrame", self.colors.night_accent),
+            ("DayCard.TFrame", self.colors.day_accent),
+            ("Manifest.TFrame", self.colors.border),
+            ("DialogCard.TFrame", self.colors.border),
         ):
             self.style.configure(
                 style_name,
-                background=COLORS.surface,
+                background=self.colors.surface,
                 bordercolor=border_color,
                 borderwidth=1,
                 relief="solid",
             )
         self.style.configure(
             "SetupTitle.TLabel",
-            background=COLORS.background,
-            foreground=COLORS.text_main,
+            background=self.colors.surface,
+            foreground=self.colors.text_main,
             font=FONTS.card_title,
         )
         self.style.configure(
             "NightTitle.TLabel",
-            background=COLORS.background,
-            foreground=COLORS.night_accent,
+            background=self.colors.night_surface,
+            foreground=self.colors.night_accent,
             font=FONTS.card_title,
         )
         self.style.configure(
             "DayTitle.TLabel",
-            background=COLORS.background,
-            foreground=COLORS.day_accent,
+            background=self.colors.day_surface,
+            foreground=self.colors.day_accent,
             font=FONTS.card_title,
         )
-        self.style.configure("SetupHeader.TSeparator", background=COLORS.border)
-        self.style.configure("NightHeader.TSeparator", background=COLORS.night_accent)
-        self.style.configure("DayHeader.TSeparator", background=COLORS.day_accent)
+        self.style.configure("SetupHeader.TSeparator", background=self.colors.border)
+        self.style.configure(
+            "NightHeader.TSeparator", background=self.colors.night_accent
+        )
+        self.style.configure("DayHeader.TSeparator", background=self.colors.day_accent)
+        self.style.configure("NightHeader.TFrame", background=self.colors.night_surface)
+        self.style.configure("DayHeader.TFrame", background=self.colors.day_surface)
 
         # Inputs
         self.style.configure(
             "TEntry",
-            fieldbackground=COLORS.input,
-            foreground=COLORS.text_main,
-            insertcolor=COLORS.text_main,
-            selectbackground=COLORS.action,
-            selectforeground=COLORS.text_main,
-            bordercolor=COLORS.border,
+            fieldbackground=self.colors.input,
+            foreground=self.colors.text_main,
+            insertcolor=self.colors.text_main,
+            selectbackground=self.colors.action,
+            selectforeground=self.colors.action_text,
+            bordercolor=self.colors.border,
+            lightcolor=self.colors.border,
+            darkcolor=self.colors.border,
             borderwidth=1,
-            padding=(8, 7),
+            padding=self._spacing(8, 7),
         )
         self.style.map(
             "TEntry",
-            fieldbackground=[("disabled", COLORS.border)],
-            foreground=[("disabled", COLORS.text_dim)],
+            fieldbackground=[("disabled", self.colors.border)],
+            foreground=[("disabled", self.colors.text_dim)],
         )
-        # DateEntry copies TCombobox into its own arrow-bearing style.
-        self.style.configure(
-            "TCombobox",
-            fieldbackground=COLORS.input,
-            background=COLORS.secondary,
-            foreground=COLORS.text_main,
-            arrowcolor=COLORS.text_main,
-            bordercolor=COLORS.border,
-            lightcolor=COLORS.border,
-            darkcolor=COLORS.border,
-            padding=(8, 7),
-        )
-        self.style.map(
-            "TCombobox",
-            fieldbackground=[
-                ("readonly", COLORS.input),
-                ("disabled", COLORS.surface),
-            ],
-            foreground=[("disabled", COLORS.text_dim)],
-            arrowcolor=[("disabled", COLORS.text_dim)],
-        )
+        # One native field/arrow layout for theme, printer, and date choices.
+        # DateEntry copies TCombobox, including this integrated arrow layout.
+        for style_name, content in (
+            ("TCombobox", "Combobox.textarea"),
+            ("TMenubutton", "Menubutton.label"),
+        ):
+            self.style.layout(
+                style_name,
+                [
+                    (
+                        "Entry.field",
+                        {
+                            "sticky": "nswe",
+                            "children": [
+                                (
+                                    "Menubutton.indicator",
+                                    {"side": "right", "sticky": "ns"},
+                                ),
+                                (
+                                    "Combobox.padding",
+                                    {
+                                        "sticky": "nswe",
+                                        "children": [
+                                            (content, {"sticky": "nswe"}),
+                                        ],
+                                    },
+                                ),
+                            ],
+                        },
+                    )
+                ],
+            )
+            self.style.configure(
+                style_name,
+                fieldbackground=self.colors.input,
+                background=self.colors.input,
+                foreground=self.colors.text_main,
+                font=FONTS.main,
+                arrowcolor=self.colors.action,
+                arrowsize=self._px(5),
+                arrowpadding=self._px(10),
+                selectbackground=self.colors.input,
+                selectforeground=self.colors.text_main,
+                bordercolor=self.colors.border,
+                lightcolor=self.colors.input,
+                darkcolor=self.colors.input,
+                padding=self._spacing(12, 8),
+            )
+            self.style.map(
+                style_name,
+                fieldbackground=[
+                    ("disabled", self.colors.surface),
+                    ("active", self.colors.secondary),
+                    ("readonly", self.colors.input),
+                ],
+                foreground=[("disabled", self.colors.text_dim)],
+                arrowcolor=[("disabled", self.colors.text_dim)],
+                background=[("active", self.colors.secondary)],
+                selectbackground=[("readonly", self.colors.input)],
+                selectforeground=[("readonly", self.colors.text_main)],
+            )
 
         # Buttons
         self.style.configure(
             "TButton",
-            background=COLORS.secondary,
-            foreground=COLORS.text_main,
-            bordercolor=COLORS.border,
+            background=self.colors.secondary,
+            foreground=self.colors.text_main,
+            bordercolor=self.colors.border,
+            lightcolor=self.colors.secondary,
+            darkcolor=self.colors.secondary,
             borderwidth=1,
             font=FONTS.bold,
-            padding=(14, 8),
+            padding=self._spacing(14, 8),
         )
         self.style.map(
             "TButton",
             background=[
-                ("disabled", COLORS.border),
-                ("pressed", COLORS.background),
-                ("active", COLORS.secondary),
+                ("disabled", self.colors.border),
+                ("pressed", self.colors.background),
+                ("active", self.colors.secondary),
             ],
-            foreground=[("disabled", COLORS.text_dim)],
+            foreground=[("disabled", self.colors.text_dim)],
         )
         self.style.configure(
             _STYLE_TERTIARY_BUTTON,
-            background=COLORS.background,
-            foreground=COLORS.text_dim,
+            background=self.colors.background,
+            foreground=self.colors.action,
             borderwidth=0,
             font=FONTS.sub,
-            padding=(6, 2),
+            padding=self._spacing(6, 2),
         )
         self.style.map(
             _STYLE_TERTIARY_BUTTON,
             background=[
-                ("pressed", COLORS.background),
-                ("active", COLORS.background),
+                ("pressed", self.colors.background),
+                ("active", self.colors.background),
             ],
             foreground=[
-                ("pressed", COLORS.text_main),
-                ("active", COLORS.text_main),
+                ("pressed", self.colors.text_main),
+                ("active", self.colors.text_main),
             ],
         )
         self.style.configure(
             _STYLE_PRIMARY_BUTTON,
-            background=COLORS.action,
-            foreground=COLORS.text_main,
-            bordercolor=COLORS.action,
+            background=self.colors.action,
+            foreground=self.colors.action_text,
+            bordercolor=self.colors.action,
+            lightcolor=self.colors.action,
+            darkcolor=self.colors.action,
             borderwidth=1,
             font=FONTS.button,
-            padding=(26, 16),
+            padding=self._spacing(26, 16),
         )
         self.style.map(
             _STYLE_PRIMARY_BUTTON,
             background=[
-                ("disabled", COLORS.border),
-                ("pressed", COLORS.action_hover),
-                ("active", COLORS.action_hover),
+                ("disabled", self.colors.border),
+                ("pressed", self.colors.action_hover),
+                ("active", self.colors.action_hover),
             ],
             foreground=[
-                ("disabled", COLORS.text_dim),
-                ("pressed", COLORS.text_main),
-                ("active", COLORS.text_main),
+                ("disabled", self.colors.text_dim),
+                ("pressed", self.colors.action_text),
+                ("active", self.colors.action_text),
             ],
         )
         self.style.configure(
             _STYLE_DANGER_BUTTON,
-            background=COLORS.error,
-            foreground=COLORS.background,
-            bordercolor=COLORS.error,
+            background=self.colors.error,
+            foreground=self.colors.background,
+            bordercolor=self.colors.error,
             borderwidth=1,
             font=FONTS.button,
-            padding=(26, 16),
+            padding=self._spacing(26, 16),
         )
         self.style.map(
             _STYLE_DANGER_BUTTON,
             background=[
-                ("disabled", COLORS.border),
+                ("disabled", self.colors.border),
                 ("pressed", "#E25D72"),
                 ("active", "#E25D72"),
             ],
-            foreground=[("disabled", COLORS.text_dim)],
+            foreground=[("disabled", self.colors.text_dim)],
+        )
+        for button_style, background in (
+            ("Header.TButton", self.colors.header),
+            ("Setup.TButton", self.colors.surface),
+        ):
+            self.style.configure(
+                button_style,
+                background=background,
+                foreground=self.colors.action,
+                bordercolor=self.colors.action,
+                lightcolor=background,
+                darkcolor=background,
+                padding=self._spacing(18, 10),
+            )
+            self.style.map(
+                button_style,
+                background=[("active", self.colors.secondary)],
+                foreground=[("disabled", self.colors.text_dim)],
+            )
+        self.style.configure(
+            "TScrollbar",
+            arrowsize=self._px(16),
+            width=self._px(16),
+            background=self.colors.secondary,
+            troughcolor=self.colors.background,
+            bordercolor=self.colors.background,
+            arrowcolor=self.colors.text_dim,
+            lightcolor=self.colors.secondary,
+            darkcolor=self.colors.secondary,
+        )
+        self.style.map(
+            "TScrollbar",
+            background=[
+                ("disabled", self.colors.secondary),
+                ("active", self.colors.border),
+            ],
+            arrowcolor=[("disabled", self.colors.text_dim)],
+        )
+        for control in (_STYLE_CARD_CHECKBUTTON, _STYLE_CARD_RADIOBUTTON):
+            self.style.configure(
+                control,
+                indicatorsize=self._px(18),
+                indicatormargin=self._spacing(0, 2, 10, 2),
+                upperbordercolor=self.colors.text_dim,
+                lowerbordercolor=self.colors.text_dim,
+            )
+            self.style.map(
+                control,
+                indicatorbackground=[
+                    (
+                        "selected",
+                        (
+                            self.colors.input
+                            if control == _STYLE_CARD_RADIOBUTTON
+                            else self.colors.action
+                        ),
+                    ),
+                    ("!selected", self.colors.input),
+                ],
+                indicatorforeground=[
+                    (
+                        "selected",
+                        (
+                            self.colors.action
+                            if control == _STYLE_CARD_RADIOBUTTON
+                            else self.colors.action_text
+                        ),
+                    )
+                ],
+                indicatorcolor=[("selected", self.colors.action)],
+            )
+        self.root.option_add("*TCombobox*Listbox.background", self.colors.input)
+        self.root.option_add("*TCombobox*Listbox.foreground", self.colors.text_main)
+        self.root.option_add("*TCombobox*Listbox.selectBackground", self.colors.action)
+        self.root.option_add(
+            "*TCombobox*Listbox.selectForeground", self.colors.action_text
         )
 
         # Progress bar
         self.style.configure(
             "Horizontal.TProgressbar",
             thickness=12,
-            troughcolor=COLORS.input,
-            background=COLORS.success,
-            bordercolor=COLORS.border,
+            troughcolor=self.colors.input,
+            background=self.colors.success,
+            bordercolor=self.colors.border,
         )
 
         # Specialized Labels
         self.style.configure(
             _STYLE_HEADER_LABEL,
             font=FONTS.header,
-            foreground=COLORS.text_main,
-            background=COLORS.background,
+            foreground=self.colors.text_main,
+            background=self.colors.background,
         )
         self.style.configure(
             _STYLE_SUB_LABEL,
             font=FONTS.sub,
-            foreground=COLORS.text_dim,
-            background=COLORS.background,
+            foreground=self.colors.text_dim,
+            background=self.colors.background,
         )
         self.style.configure(
             "ManifestTitle.TLabel",
             font=FONTS.card_title,
-            foreground=COLORS.text_main,
-            background=COLORS.surface,
+            foreground=self.colors.text_main,
+            background=self.colors.surface,
         )
         # Semantic readiness states.  Colour reinforces the label text; it is
         # never the only signal, per the DESIGN.md validation-state rule.
         for count_style, count_color in (
-            (_STYLE_COUNT_SELECTED_LABEL, COLORS.text_main),
-            ("CountMuted.TLabel", COLORS.text_dim),
-            ("CountError.TLabel", COLORS.error),
+            (_STYLE_COUNT_SELECTED_LABEL, self.colors.text_main),
+            ("CountMuted.TLabel", self.colors.text_dim),
+            ("CountError.TLabel", self.colors.error),
         ):
             self.style.configure(
                 count_style,
                 font=FONTS.bold,
                 foreground=count_color,
-                background=COLORS.surface,
+                background=self.colors.surface,
             )
 
         # Status labels (success / error variants)
         self.style.configure(
             _STYLE_SUCCESS_LABEL,
             font=FONTS.sub,
-            foreground=COLORS.success,
-            background=COLORS.background,
+            foreground=self.colors.success,
+            background=self.colors.background,
         )
         self.style.configure(
             _STYLE_ERROR_LABEL,
             font=FONTS.sub,
-            foreground=COLORS.error,
-            background=COLORS.background,
+            foreground=self.colors.error,
+            background=self.colors.background,
         )
 
         # Checkbuttons
         self.style.configure(
             "TCheckbutton",
-            background=COLORS.background,
-            foreground=COLORS.text_main,
+            background=self.colors.background,
+            foreground=self.colors.text_main,
             font=FONTS.sub,
         )
         self.style.map(
             "TCheckbutton",
-            background=[("active", COLORS.background)],
-            foreground=[("disabled", COLORS.text_dim)],
+            background=[("active", self.colors.background)],
+            foreground=[("disabled", self.colors.text_dim)],
         )
         self.style.configure(
             "TRadiobutton",
-            background=COLORS.background,
-            foreground=COLORS.text_main,
+            background=self.colors.background,
+            foreground=self.colors.text_main,
             font=FONTS.sub,
         )
         self.style.map(
             "TRadiobutton",
-            background=[("active", COLORS.background)],
-            foreground=[("disabled", COLORS.text_dim)],
+            background=[("active", self.colors.background)],
+            foreground=[("disabled", self.colors.text_dim)],
         )
         self.style.configure(
             _STYLE_CARD_CHECKBUTTON,
-            background=COLORS.surface,
-            foreground=COLORS.text_main,
+            background=self.colors.surface,
+            foreground=self.colors.text_main,
             font=FONTS.bold,
         )
         self.style.map(
             _STYLE_CARD_CHECKBUTTON,
-            background=[("active", COLORS.surface)],
-            foreground=[("disabled", COLORS.text_dim)],
+            background=[("active", self.colors.surface)],
+            foreground=[("disabled", self.colors.text_dim)],
         )
         self.style.configure(
             _STYLE_CARD_RADIOBUTTON,
-            background=COLORS.surface,
-            foreground=COLORS.text_main,
+            background=self.colors.surface,
+            foreground=self.colors.text_main,
             font=FONTS.main,
         )
         self.style.map(
             _STYLE_CARD_RADIOBUTTON,
-            background=[("active", COLORS.surface)],
-            foreground=[("disabled", COLORS.text_dim)],
+            background=[("active", self.colors.surface)],
+            foreground=[("disabled", self.colors.text_dim)],
         )
         self.style.configure(
             "Card.TSeparator",
-            background=COLORS.border,
-        )
-
-        # OptionMenu (printer dropdown)
-        self.style.configure(
-            "TMenubutton",
-            background=COLORS.input,
-            foreground=COLORS.text_main,
-            borderwidth=0,
-            font=FONTS.main,
-            padding=(10, 6),
-        )
-        self.style.map(
-            "TMenubutton",
-            background=[
-                ("disabled", COLORS.border),
-                ("active", COLORS.secondary),
-            ],
-            foreground=[("disabled", COLORS.text_dim)],
+            background=self.colors.border,
         )
 
         # Clam otherwise relies on subtle platform defaults for keyboard focus.
@@ -606,14 +872,36 @@ class ScheduleAppUI:
         ):
             self.style.configure(
                 style_name,
-                focuscolor=COLORS.night_accent,
+                focuscolor=self.colors.night_accent,
                 focusthickness=2,
             )
             self.style.map(
                 style_name,
-                bordercolor=[("focus", COLORS.night_accent)],
-                lightcolor=[("focus", COLORS.night_accent)],
-                darkcolor=[("focus", COLORS.night_accent)],
+                bordercolor=[("focus", self.colors.night_accent)],
+                lightcolor=[("focus", self.colors.night_accent)],
+                darkcolor=[("focus", self.colors.night_accent)],
+            )
+
+        # tkcalendar copies, rather than inherits, TCombobox at construction.
+        # Refresh that copy as well when only our palette changes within clam.
+        self.style.configure(
+            "DateEntry", **cast(dict[str, Any], self.style.configure("TCombobox"))
+        )
+        self.style.map("DateEntry", **cast(dict[str, Any], self.style.map("TCombobox")))
+
+    def _style_theme_menu(self) -> None:
+        """Restyle the native choice menu, including already-created popups."""
+        if self._theme_menu is not None:
+            self._theme_menu.configure(
+                background=self.colors.surface,
+                foreground=self.colors.text_main,
+                activebackground=self.colors.action,
+                activeforeground=self.colors.action_text,
+                selectcolor=self.colors.action,
+                font=FONTS.main,
+                borderwidth=1,
+                activeborderwidth=self._px(6),
+                relief="solid",
             )
 
     def _apply_icon(self) -> None:
@@ -626,7 +914,11 @@ class ScheduleAppUI:
             ico_path = Path(base) / "icon.ico"
             png_path = Path(base) / "icon.png"
             if ico_path.exists():
-                self.root.iconbitmap(str(ico_path))
+                if sys.platform == "win32":
+                    # The default also reaches owned windows and new Tk frames.
+                    self.root.iconbitmap(default=str(ico_path))
+                else:
+                    self.root.iconbitmap(str(ico_path))
             elif png_path.exists():
                 img = tk.PhotoImage(file=str(png_path))
                 self.root.iconphoto(True, img)
@@ -642,8 +934,12 @@ class ScheduleAppUI:
             w = self.root.winfo_width()
             h = self.root.winfo_height()
             left, top, right, bottom = _get_work_area(self.root)
-            x = left + max(0, (right - left - w - _WINDOW_FRAME_WIDTH_RESERVE) // 2)
-            y = top + max(0, (bottom - top - h - _WINDOW_FRAME_HEIGHT_RESERVE) // 2)
+            x = left + max(
+                0, (right - left - w - self._px(_WINDOW_FRAME_WIDTH_RESERVE)) // 2
+            )
+            y = top + max(
+                0, (bottom - top - h - self._px(_WINDOW_FRAME_HEIGHT_RESERVE)) // 2
+            )
             self.root.geometry(f"{w}x{h}+{x}+{y}")
         except Exception as e:
             logger.debug(f"Could not center window: {e}")
@@ -676,16 +972,7 @@ class ScheduleAppUI:
             menu = self.printer_dropdown["menu"]
             menu.delete(0, "end")
             for name in printers:
-                # tk._setit is an internal helper; keep usage isolated here.
-                set_it = getattr(tk, "_setit", None)
-                if callable(set_it):
-                    menu.add_command(label=name, command=set_it(self.printer_var, name))
-                else:
-                    var = self.printer_var
-                    if var is not None:
-                        menu.add_command(
-                            label=name, command=lambda v=name, vv=var: vv.set(v)
-                        )
+                menu.add_radiobutton(label=name, value=name, variable=self.printer_var)
 
             current = self.printer_var.get()
             if current and current in printers:
@@ -720,11 +1007,13 @@ class ScheduleAppUI:
 
     def _create_widgets(self) -> None:
         """Create all UI widgets."""
+        # Reserve the action area before the scrolling form takes remaining space.
+        self._create_footer(self.root)
         viewport = ttk.Frame(self.root)
         viewport.pack(fill="both", expand=True)
         self._main_canvas = tk.Canvas(
             viewport,
-            background=COLORS.background,
+            background=self.colors.background,
             borderwidth=0,
             highlightthickness=0,
         )
@@ -736,7 +1025,7 @@ class ScheduleAppUI:
         self._main_canvas.configure(yscrollcommand=self._main_scrollbar.set)
         self._main_canvas.pack(side="left", fill="both", expand=True)
 
-        bg_canvas = ttk.Frame(self._main_canvas, padding="28")
+        bg_canvas = ttk.Frame(self._main_canvas)
         self._main_content = bg_canvas
         self._main_content_window = self._main_canvas.create_window(
             (0, 0), window=bg_canvas, anchor="nw"
@@ -747,10 +1036,15 @@ class ScheduleAppUI:
         self.root.bind(_FOCUS_IN_EVENT, self._ensure_focus_visible, add="+")
 
         self._create_header(bg_canvas)
-        self._create_setup_card(bg_canvas)
-        self._create_shift_selection_row(bg_canvas)
-        self._create_manifest_card(bg_canvas)
-        self._create_footer(bg_canvas)
+        workspace = ttk.Frame(
+            bg_canvas,
+            padding=(self._px(24), self._gap(18), self._px(24), self._gap(8)),
+        )
+        workspace.pack(fill="both", expand=True)
+        self._create_setup_card(workspace)
+        self._create_run_heading(workspace)
+        self._create_shift_selection_row(workspace)
+        self._create_manifest_card(workspace)
         self.root.bind("<Alt-s>", lambda _event: self._show_setup_dialog())
         self.root.bind("<Alt-h>", lambda _event: self.show_help())
         self.refresh_manifest_preview()
@@ -833,30 +1127,71 @@ class ScheduleAppUI:
             logger.debug(f"Could not reveal focused control: {e}")
 
     def _create_header(self, parent: ttk.Frame) -> None:
-        """Create the header section."""
-        header_row = ttk.Frame(parent)
-        header_row.pack(fill="x", pady=(0, 20))
-
-        title_row = ttk.Frame(header_row)
-        title_row.pack(fill="x")
+        """Give the workspace its identity, dark palette selection, and help."""
+        header_row = ttk.Frame(
+            parent, style=_STYLE_HEADER_FRAME, padding=(self._px(28), self._gap(18))
+        )
+        header_row.pack(fill="x")
+        brand = ttk.Frame(header_row, style=_STYLE_HEADER_FRAME)
+        brand.pack(side="left")
+        ttk.Label(brand, text="ShiftPress", style="Brand.TLabel").pack(anchor="w")
         ttk.Label(
-            title_row,
-            text="Prepare print run",
-            style=_STYLE_HEADER_LABEL,
-        ).pack(side="left")
+            brand,
+            text="Schedules, ready for the next shift.",
+            style=_STYLE_HEADER_SUB_LABEL,
+        ).pack(anchor="w", pady=self._spacing(2, 0))
         version = _get_version()
         if version:
             ttk.Label(
-                title_row,
-                text=f"ShiftPress  ·  v{version}",
-                style=_STYLE_SUB_LABEL,
-            ).pack(side="right", anchor="s", pady=(0, 5))
-
-        ttk.Label(
+                header_row, text=f"v{version}", style=_STYLE_HEADER_SUB_LABEL
+            ).pack(side="right", padx=self._spacing(24, 0))
+        self._help_button = ttk.Button(
             header_row,
+            text="How to use",
+            underline=0,
+            style="Header.TButton",
+            command=self.show_help,
+        )
+        self._help_button.pack(side="right", padx=self._spacing(16, 0))
+        self._theme_picker = ttk.Menubutton(
+            header_row,
+            textvariable=self.theme_var,
+            style="TMenubutton",
+            width=9,
+            direction="below",
+            takefocus=True,
+        )
+        self._theme_menu = tk.Menu(self._theme_picker, tearoff=False)
+        for theme in ("Midnight", "Rose"):
+            self._theme_menu.add_radiobutton(
+                label=theme,
+                value=theme,
+                variable=self.theme_var,
+                command=lambda: self.set_theme(self.get_theme()),
+            )
+        self._theme_picker.configure(menu=self._theme_menu)
+        self._style_theme_menu()
+        self._theme_picker.pack(side="right")
+        ttk.Label(header_row, text="Theme", style=_STYLE_HEADER_SUB_LABEL).pack(
+            side="right", padx=self._spacing(16, 10)
+        )
+
+    def _create_run_heading(self, parent: ttk.Frame) -> None:
+        """Place the task title next to the action that restores its defaults."""
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=(self._gap(24), self._gap(14)))
+        self._reset_btn = ttk.Button(
+            row, text="Reset run", style=_STYLE_TERTIARY_BUTTON, command=self._reset_run
+        )
+        self._reset_btn.pack(side="right", anchor="s")
+        ttk.Label(row, text="Prepare print run", style="Section.TLabel").pack(
+            anchor="w"
+        )
+        ttk.Label(
+            row,
             text="Choose exactly which schedules go to print.",
             style=_STYLE_SUB_LABEL,
-        ).pack(anchor="w", pady=(6, 0))
+        ).pack(anchor="w", pady=self._spacing(5, 0))
 
     def _create_titled_card(
         self,
@@ -865,50 +1200,69 @@ class ScheduleAppUI:
         style_prefix: str,
         padding: int,
     ) -> tuple[ttk.Frame, ttk.Frame]:
-        """Create a native card with a clean title and thin accent rule."""
-        shell = ttk.Frame(parent)
-        title_row = ttk.Frame(shell)
+        """Create a native panel with a tinted, full-width title band."""
+        shell = ttk.Frame(parent, style=f"{style_prefix}Card.TFrame", padding=1)
+        title_row = ttk.Frame(
+            shell,
+            style=f"{style_prefix}Header.TFrame",
+            padding=(self._px(18), self._gap(11)),
+        )
         title_row.pack(fill="x")
         ttk.Label(
             title_row,
             text=title,
             style=f"{style_prefix}Title.TLabel",
         ).pack(side="left")
-        ttk.Separator(
-            title_row,
-            style=f"{style_prefix}Header.TSeparator",
-        ).pack(side="left", fill="x", expand=True, padx=(8, 0))
-
         card = ttk.Frame(
             shell,
-            style=f"{style_prefix}Card.TFrame",
-            padding=str(padding),
+            style=_STYLE_CARD_FRAME,
+            padding=(self._px(padding), self._gap(padding)),
         )
         card.pack(fill="both", expand=True)
         return shell, card
 
     def _create_setup_card(self, parent: ttk.Frame) -> None:
         """Create a setup summary whose details open in a separate dialog."""
-        shell, card = self._create_titled_card(parent, "Setup", "Setup", 18)
-        shell.pack(fill="x", pady=(0, 16))
-
-        summary_row = ttk.Frame(card, style=_STYLE_CARD_FRAME)
-        summary_row.pack(fill="x")
-        self.setup_summary_label = ttk.Label(
-            summary_row,
-            text="Template folders not configured\nChoose a printer",
-            style="Card.TLabel",
-            justify="left",
+        card = ttk.Frame(
+            parent,
+            style="SetupCard.TFrame",
+            padding=(self._px(18), self._gap(12), self._px(18), self._gap(18)),
         )
-        self.setup_summary_label.pack(side="left", anchor="w")
+        card.pack(fill="x")
+        ttk.Label(card, text="Print setup", style="SetupTitle.TLabel").grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=self._spacing(0, 12)
+        )
+        for column, (key, title) in enumerate(
+            (
+                ("night", "Night templates"),
+                ("day", "Day templates"),
+                ("printer", "Printer"),
+            )
+        ):
+            card.grid_columnconfigure(column, weight=1, uniform="setup")
+            group = ttk.Frame(card, style=_STYLE_CARD_FRAME)
+            group.grid(row=1, column=column, sticky="nsew", padx=self._spacing(0, 18))
+            ttk.Label(group, text=title, style=_STYLE_CARD_LABEL).pack(
+                anchor="w", pady=self._spacing(0, 6)
+            )
+            value = ttk.Label(
+                group,
+                text=_NOT_CONFIGURED_LABEL,
+                style="SetupValue.TLabel",
+                wraplength=self._px(240),
+                justify="left",
+            )
+            value.pack(anchor="w", fill="x")
+            self._setup_values[key] = value
         self._setup_toggle_btn = ttk.Button(
-            summary_row,
+            card,
             text="Setup…",
+            style="Setup.TButton",
             underline=0,
             command=self._show_setup_dialog,
             width=12,
         )
-        self._setup_toggle_btn.pack(side="right", padx=(18, 0))
+        self._setup_toggle_btn.grid(row=1, column=3, padx=self._spacing(12, 0))
 
         self._create_setup_dialog()
         self.refresh_setup_summary()
@@ -919,16 +1273,17 @@ class ScheduleAppUI:
         self._setup_dialog = dialog
         dialog.withdraw()
         dialog.title("ShiftPress Setup")
-        dialog.configure(bg=COLORS.background)
+        dialog.transient(self.root)
+        dialog.configure(bg=self.colors.background)
         dialog.resizable(True, True)
         dialog.protocol("WM_DELETE_WINDOW", self._cancel_setup_dialog)
-        dialog.bind("<Escape>", lambda _event: self._cancel_setup_dialog())
+        dialog.bind(_ESCAPE_EVENT, lambda _event: self._cancel_setup_dialog())
 
         viewport = ttk.Frame(dialog)
         viewport.pack(fill="both", expand=True)
         self._setup_canvas = tk.Canvas(
             viewport,
-            background=COLORS.background,
+            background=self.colors.background,
             borderwidth=0,
             highlightthickness=0,
         )
@@ -939,7 +1294,7 @@ class ScheduleAppUI:
         )
         self._setup_canvas.configure(yscrollcommand=self._setup_scrollbar.set)
         self._setup_canvas.pack(side="left", fill="both", expand=True)
-        canvas = ttk.Frame(self._setup_canvas, padding="24")
+        canvas = ttk.Frame(self._setup_canvas, padding=self._px(24))
         self._setup_content = canvas
         self._setup_content_window = self._setup_canvas.create_window(
             (0, 0), window=canvas, anchor="nw"
@@ -953,12 +1308,12 @@ class ScheduleAppUI:
             canvas,
             text="Choose the template folders and printer used for print runs.",
             style=_STYLE_SUB_LABEL,
-        ).pack(anchor="w", pady=(4, 18))
+        ).pack(anchor="w", pady=self._spacing(4, 18))
 
         self._setup_details = ttk.Frame(
             canvas,
             style="DialogCard.TFrame",
-            padding="18",
+            padding=self._px(18),
         )
         self._setup_details.pack(fill="both", expand=True)
 
@@ -971,13 +1326,13 @@ class ScheduleAppUI:
         _setup_placeholder(self.night_entry, _PATH_PLACEHOLDER)
         self._create_printer_row(self._setup_details)
         action_row = ttk.Frame(canvas)
-        action_row.pack(anchor="e", pady=(18, 0))
+        action_row.pack(anchor="e", pady=self._spacing(18, 0))
         ttk.Button(
             action_row,
             text="Cancel",
             command=self._cancel_setup_dialog,
             width=14,
-        ).pack(side="left", padx=(0, 10))
+        ).pack(side="left", padx=self._spacing(0, 10))
         ttk.Button(
             action_row,
             text="Apply",
@@ -1045,7 +1400,7 @@ class ScheduleAppUI:
 
     def _show_setup_dialog(self) -> None:
         """Show setup without expanding or displacing the print work surface."""
-        if self._setup_dialog is None:
+        if not self._inputs_enabled or self._setup_dialog is None:
             return
         dialog = self._setup_dialog
         self._setup_snapshot = (
@@ -1055,7 +1410,6 @@ class ScheduleAppUI:
         )
         dialog.deiconify()
         try:
-            dialog.transient(self.root)
             dialog.update_idletasks()
             if self._setup_content is None:
                 return
@@ -1082,6 +1436,9 @@ class ScheduleAppUI:
         except Exception as e:
             logger.debug(f"Could not position setup dialog: {e}")
         dialog.lift()
+        # Ownership and the first lift can create a new Windows frame. Apply
+        # DWM colors only after that frame exists, including on the first open.
+        self._style_titlebar(dialog)
         dialog.focus_force()
         if self.night_entry is not None:
             self.night_entry.focus_set()
@@ -1115,8 +1472,6 @@ class ScheduleAppUI:
 
     def refresh_setup_summary(self) -> None:
         """Identify configured template sources without exposing long paths."""
-        if self.setup_summary_label is None:
-            return
         day_folder = self.get_day_folder()
         night_folder = self.get_night_folder()
         printer = self.get_printer_name()
@@ -1125,22 +1480,22 @@ class ScheduleAppUI:
         )
         day_status = self._folder_tail(day_folder)
         night_status = self._folder_tail(night_folder)
-        self.setup_summary_label.config(
-            text=(
-                f"Night templates: {night_status}\n"
-                f"Day templates: {day_status}\n"
-                f"Printer: {printer_status}"
-            )
-        )
+        for key, value in (
+            ("night", night_status),
+            ("day", day_status),
+            ("printer", printer_status),
+        ):
+            if key in self._setup_values:
+                self._setup_values[key].config(text=value)
 
     @staticmethod
     def _folder_tail(folder: str) -> str:
         """Return a compact, recognizable two-part folder identity."""
         if not isinstance(folder, str):
-            return "Not configured"
+            return _NOT_CONFIGURED_LABEL
         value = folder.strip().rstrip("/\\")
         if not value or value == _PATH_PLACEHOLDER:
-            return "Not configured"
+            return _NOT_CONFIGURED_LABEL
         parts = [part for part in re.split(r"[/\\]+", value) if part]
         if not parts:
             return value
@@ -1161,7 +1516,7 @@ class ScheduleAppUI:
     def _create_shift_selection_row(self, parent: ttk.Frame) -> None:
         """Create equal-width Night and Day selection panels."""
         row = ttk.Frame(parent)
-        row.pack(fill="x", pady=(0, 16))
+        row.pack(fill="x", pady=self._spacing(0, 16))
         row.grid_columnconfigure(0, weight=1, uniform="shift")
         row.grid_columnconfigure(1, weight=1, uniform="shift")
 
@@ -1174,7 +1529,7 @@ class ScheduleAppUI:
                 row,
                 text=self._dependency_error,
                 style=_STYLE_ERROR_LABEL,
-                wraplength=760,
+                wraplength=self._px(760),
                 justify="left",
             ).grid(row=0, column=0, columnspan=2, sticky="ew")
             logger.error("tkcalendar is not installed; date pickers unavailable")
@@ -1203,26 +1558,27 @@ class ScheduleAppUI:
             Calendar option mapping to pass inline to ``DateEntry``.
         """
         return {
-            "background": COLORS.background,
-            "foreground": COLORS.text_main,
-            "bordercolor": COLORS.border,
-            "headersbackground": COLORS.background,
-            "headersforeground": COLORS.text_dim,
+            "font": FONTS.main,
+            "background": self.colors.background,
+            "foreground": self.colors.text_main,
+            "bordercolor": self.colors.border,
+            "headersbackground": self.colors.background,
+            "headersforeground": self.colors.text_dim,
             # Dark ink on the accent: near-white on amber measures 1.69:1.
             "selectbackground": select_color,
-            "selectforeground": COLORS.background,
-            "normalbackground": COLORS.surface,
-            "normalforeground": COLORS.text_main,
-            "weekendbackground": COLORS.surface,
-            "weekendforeground": COLORS.text_dim,
-            "othermonthbackground": COLORS.background,
-            "othermonthforeground": COLORS.text_dim,
-            "othermonthwebackground": COLORS.background,
-            "othermonthweforeground": COLORS.text_dim,
-            "disabledbackground": COLORS.surface,
-            "disabledforeground": COLORS.border,
-            "disableddaybackground": COLORS.surface,
-            "disableddayforeground": COLORS.border,
+            "selectforeground": self.colors.background,
+            "normalbackground": self.colors.surface,
+            "normalforeground": self.colors.text_main,
+            "weekendbackground": self.colors.surface,
+            "weekendforeground": self.colors.text_dim,
+            "othermonthbackground": self.colors.background,
+            "othermonthforeground": self.colors.text_dim,
+            "othermonthwebackground": self.colors.background,
+            "othermonthweforeground": self.colors.text_dim,
+            "disabledbackground": self.colors.surface,
+            "disabledforeground": self.colors.border,
+            "disableddaybackground": self.colors.surface,
+            "disableddayforeground": self.colors.border,
             # ISO week numbers are noise for a print-run date choice.
             "showweeknumbers": False,
             "firstweekday": "sunday",
@@ -1238,11 +1594,17 @@ class ScheduleAppUI:
         """Create one independent native shift selection panel."""
         date_entry_cls = cast(Any, DateEntry)
         label = shift_type.title()
-        accent = COLORS.night_accent if shift_type == "night" else COLORS.day_accent
+        accent = (
+            self.colors.night_accent
+            if shift_type == "night"
+            else self.colors.day_accent
+        )
         calendar_kw = self._calendar_kwargs(accent)
         horizontal_padding = (0, 8) if column == 0 else (8, 0)
-        shell, card = self._create_titled_card(parent, label, label, 22)
-        shell.grid(row=0, column=column, sticky="nsew", padx=horizontal_padding)
+        shell, card = self._create_titled_card(parent, f"{label} schedule", label, 18)
+        shell.grid(
+            row=0, column=column, sticky="nsew", padx=self._spacing(*horizontal_padding)
+        )
 
         enabled_var = tk.BooleanVar(value=True)
         mode_var = tk.StringVar(value="single")
@@ -1257,10 +1619,10 @@ class ScheduleAppUI:
             command=sync_panel,
             style=_STYLE_CARD_CHECKBUTTON,
         )
-        include_check.pack(anchor="w", pady=(0, 18))
+        include_check.pack(anchor="w", pady=(0, self._gap(18)))
 
         mode_row = ttk.Frame(card, style=_STYLE_CARD_FRAME)
-        mode_row.pack(fill="x", pady=(0, 18))
+        mode_row.pack(fill="x", pady=(0, self._gap(18)))
         single_radio = ttk.Radiobutton(
             mode_row,
             text="Single date",
@@ -1269,7 +1631,7 @@ class ScheduleAppUI:
             command=sync_panel,
             style=_STYLE_CARD_RADIOBUTTON,
         )
-        single_radio.pack(anchor="w", pady=(0, 10))
+        single_radio.pack(side="left", padx=self._spacing(0, 24))
         range_radio = ttk.Radiobutton(
             mode_row,
             text="Date range",
@@ -1278,7 +1640,7 @@ class ScheduleAppUI:
             command=sync_panel,
             style=_STYLE_CARD_RADIOBUTTON,
         )
-        range_radio.pack(anchor="w")
+        range_radio.pack(side="left")
 
         date_stack = ttk.Frame(card, style=_STYLE_CARD_FRAME)
         date_stack.pack(fill="x")
@@ -1289,7 +1651,7 @@ class ScheduleAppUI:
         single_wrap = ttk.Frame(date_stack, style=_STYLE_CARD_FRAME)
         single_wrap.grid(row=0, column=0, sticky="ew")
         ttk.Label(single_wrap, text="Date", style=_STYLE_CARD_SUB_LABEL).pack(
-            anchor="w", pady=(0, 6)
+            anchor="w", pady=self._spacing(0, 6)
         )
         single_picker = self._create_date_entry(
             date_entry_cls,
@@ -1305,10 +1667,10 @@ class ScheduleAppUI:
         range_wrap.grid_columnconfigure(1, weight=1)
 
         range_start_wrap = ttk.Frame(range_wrap, style=_STYLE_CARD_FRAME)
-        range_start_wrap.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        range_start_wrap.grid(row=0, column=0, sticky="ew", padx=self._spacing(0, 6))
         ttk.Label(
             range_start_wrap, text="Start date", style=_STYLE_CARD_SUB_LABEL
-        ).pack(anchor="w", pady=(0, 6))
+        ).pack(anchor="w", pady=self._spacing(0, 6))
         range_start_picker = self._create_date_entry(
             date_entry_cls,
             range_start_wrap,
@@ -1318,9 +1680,9 @@ class ScheduleAppUI:
         range_start_picker.set_date(default_date)
 
         range_end_wrap = ttk.Frame(range_wrap, style=_STYLE_CARD_FRAME)
-        range_end_wrap.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        range_end_wrap.grid(row=0, column=1, sticky="ew", padx=self._spacing(6, 0))
         ttk.Label(range_end_wrap, text="End date", style=_STYLE_CARD_SUB_LABEL).pack(
-            anchor="w", pady=(0, 6)
+            anchor="w", pady=self._spacing(0, 6)
         )
         range_end_picker = self._create_date_entry(
             date_entry_cls,
@@ -1330,13 +1692,12 @@ class ScheduleAppUI:
         range_end_picker.pack(fill="x")
         range_end_picker.set_date(default_date)
 
-        ttk.Separator(card, style="Card.TSeparator").pack(fill="x", pady=(20, 14))
         count_label = ttk.Label(
             card,
             text="Selected · 1 document",
             style=_STYLE_COUNT_SELECTED_LABEL,
         )
-        count_label.pack(anchor="w")
+        count_label.pack(anchor="w", pady=(self._gap(18), 0))
 
         panel = _ShiftPanelWidgets(
             enabled_var=enabled_var,
@@ -1384,10 +1745,10 @@ class ScheduleAppUI:
                 logger.debug(f"Could not open calendar: {e}")
             return "break"
 
-        # Mouse anywhere in the field, plus the keyboard affordances a
-        # readonly field would otherwise lose.
+        # Replace tkcalendar's arrow-click handler: adding ours would toggle
+        # the popup twice when the arrow itself is clicked.
         for sequence in ("<Button-1>", "<Down>", "<space>", "<Return>"):
-            picker.bind(sequence, open_calendar, add="+")
+            picker.bind(sequence, open_calendar)
 
     def _on_shift_date_selected(self, shift_type: ShiftType) -> None:
         """Refresh visible intent after a shift date changes."""
@@ -1396,6 +1757,8 @@ class ScheduleAppUI:
 
     def _reset_run(self) -> None:
         """Restore the common Night-today and Day-tomorrow print scope."""
+        if not self._inputs_enabled:
+            return
         defaults: dict[ShiftType, date] = {
             "night": self._today,
             "day": self._today + timedelta(days=1),
@@ -1457,24 +1820,40 @@ class ScheduleAppUI:
 
     def _create_manifest_card(self, parent: ttk.Frame) -> None:
         """Create the exact preflight-neutral print manifest summary."""
-        card = ttk.Frame(parent, style="Manifest.TFrame", padding="18")
+        card = ttk.Frame(
+            parent, style="Manifest.TFrame", padding=(self._px(18), self._gap(18))
+        )
         self._manifest_card = card
-        card.pack(fill="x", pady=(0, 16))
+        card.pack(fill="x", pady=self._spacing(0, 16))
+        card.columnconfigure(0, weight=2)
+        card.columnconfigure(1, weight=1)
         self.manifest_title_label = ttk.Label(
             card,
             text="Print scope: No schedules selected",
             style="ManifestTitle.TLabel",
         )
-        self.manifest_title_label.pack(anchor="w", pady=(0, 10))
+        self.manifest_title_label.grid(
+            row=0, column=0, sticky="w", pady=self._spacing(0, 8)
+        )
         self.manifest_label = ttk.Label(
             card,
-            text="Printer: Choose a printer",
+            text="Select schedules to see the print scope",
             style=_STYLE_CARD_SUB_LABEL,
             justify="left",
             anchor="w",
-            wraplength=760,
+            wraplength=self._px(620),
         )
-        self.manifest_label.pack(fill="x")
+        self.manifest_label.grid(row=1, column=0, sticky="ew")
+        self._manifest_printer_label = ttk.Label(
+            card,
+            text="Printer\nChoose a printer",
+            style=_STYLE_CARD_LABEL,
+            justify="left",
+            wraplength=self._px(280),
+        )
+        self._manifest_printer_label.grid(
+            row=0, column=1, rowspan=2, sticky="e", padx=self._spacing(24, 0)
+        )
 
     def _create_date_entry(
         self,
@@ -1540,25 +1919,28 @@ class ScheduleAppUI:
             if self._main_content is None:
                 return
             req_w = self._main_content.winfo_reqwidth()
-            req_h = self._main_content.winfo_reqheight()
+            footer_height = (
+                self._footer_frame.winfo_reqheight() if self._footer_frame else 0
+            )
+            req_h = self._main_content.winfo_reqheight() + footer_height
             left, top, right, bottom = _get_work_area(self.root)
             work_width = right - left
             work_height = bottom - top
 
             target_w = min(
-                max(WINDOW_WIDTH, req_w),
+                max(self._px(WINDOW_WIDTH), req_w),
                 max(
                     AUTO_RESIZE_MIN_WIDTH,
-                    work_width - _WINDOW_FRAME_WIDTH_RESERVE,
+                    work_width - self._px(_WINDOW_FRAME_WIDTH_RESERVE),
                 ),
             )
             usable_h = max(
                 AUTO_RESIZE_MIN_HEIGHT,
-                work_height - _WINDOW_FRAME_HEIGHT_RESERVE,
+                work_height - self._px(_WINDOW_FRAME_HEIGHT_RESERVE),
             )
             target_h = min(max(AUTO_RESIZE_MIN_HEIGHT, req_h), usable_h)
 
-            self.root.minsize(target_w, AUTO_RESIZE_MIN_HEIGHT)
+            self.root.minsize(min(target_w, self._px(900)), AUTO_RESIZE_MIN_HEIGHT)
             self.root.geometry(f"{target_w}x{target_h}")
             if req_h > target_h:
                 self._show_main_scrollbar()
@@ -1570,9 +1952,9 @@ class ScheduleAppUI:
     def _create_printer_row(self, parent: ttk.Frame | ttk.LabelFrame) -> None:
         """Create the printer selection row."""
         output_row = ttk.Frame(parent, style=_STYLE_CARD_FRAME)
-        output_row.pack(fill="x", pady=(8, 0))
+        output_row.pack(fill="x", pady=self._spacing(8, 0))
         ttk.Label(output_row, text="Printer", style=_STYLE_CARD_SUB_LABEL).pack(
-            anchor="w", pady=(0, 8)
+            anchor="w", pady=self._spacing(0, 8)
         )
 
         if win32print is None:
@@ -1593,21 +1975,11 @@ class ScheduleAppUI:
         self.printer_dropdown = ttk.OptionMenu(
             printer_row, self.printer_var, DEFAULT_PRINTER_LABEL, *all_printers
         )
-        self.printer_dropdown.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.printer_dropdown.pack(
+            side="left", fill="x", expand=True, padx=self._spacing(0, 10)
+        )
 
-        # Style the dropdown popup menu to match the dark theme.
-        try:
-            menu = self.printer_dropdown["menu"]
-            menu.configure(
-                bg=COLORS.surface,
-                fg=COLORS.text_main,
-                activebackground=COLORS.action,
-                activeforeground=COLORS.text_main,
-                borderwidth=1,
-                relief="flat",
-            )
-        except Exception as e:
-            logger.debug(f"Could not style printer dropdown menu: {e}")
+        self._style_printer_menu()
 
         self._refresh_btn = ttk.Button(
             printer_row,
@@ -1622,31 +1994,50 @@ class ScheduleAppUI:
             output_row,
             text="",
             style=_STYLE_CARD_SUB_LABEL,
-            wraplength=640,
+            wraplength=self._px(640),
             justify="left",
         )
-        self._printer_status_label.pack(anchor="w", pady=(6, 0))
+        self._printer_status_label.pack(anchor="w", pady=self._spacing(6, 0))
         self._update_printer_status(all_printers)
+
+    def _style_printer_menu(self) -> None:
+        """Keep the native printer popup in the selected dark palette."""
+        if self.printer_dropdown is None:
+            return
+        try:
+            self.printer_dropdown["menu"].configure(
+                bg=self.colors.surface,
+                fg=self.colors.text_main,
+                activebackground=self.colors.action,
+                activeforeground=self.colors.action_text,
+                selectcolor=self.colors.action,
+                font=FONTS.main,
+                activeborderwidth=self._px(6),
+                borderwidth=1,
+                relief="solid",
+            )
+        except tk.TclError as error:
+            logger.debug("Could not style printer dropdown menu: %s", error)
 
     def _on_printer_changed(self, *_args: object) -> None:
         """Refresh setup and manifest copy after the printer changes."""
         self.refresh_setup_summary()
         self.refresh_manifest_preview()
 
-    def _create_footer(self, parent: ttk.Frame) -> None:
+    def _create_footer(self, parent: tk.Misc) -> None:
         """Create the action footer (status, progress, button)."""
-        footer = ttk.Frame(parent)
+        footer = ttk.Frame(parent, padding=self._spacing(24, 12, 24, 16))
         self._footer_frame = footer
-        footer.pack(fill="x")
+        footer.pack(side="bottom", fill="x")
         footer.grid_columnconfigure(0, weight=1)
 
         status_wrap = ttk.Frame(footer)
-        status_wrap.grid(row=0, column=0, sticky="ew", padx=(0, 24))
+        status_wrap.grid(row=0, column=0, sticky="ew", padx=self._spacing(0, 24))
         self.status_label = ttk.Label(
             status_wrap,
             text="Complete Setup to prepare a print scope",
             style=_STYLE_SUB_LABEL,
-            wraplength=620,
+            wraplength=self._px(620),
             justify="left",
         )
         self.status_label.pack(side="left")
@@ -1660,28 +2051,15 @@ class ScheduleAppUI:
         )
         self._logs_btn = open_logs_btn
 
-        reset_btn = ttk.Button(
-            status_wrap,
-            text="Reset run",
-            style=_STYLE_TERTIARY_BUTTON,
-            command=self._reset_run,
-            cursor="hand2",
-        )
-        reset_btn.pack(side="left", padx=(12, 0))
-
-        help_btn = ttk.Button(
-            status_wrap,
-            text="How to use",
-            underline=0,
-            style=_STYLE_TERTIARY_BUTTON,
-            command=self.show_help,
-            cursor="hand2",
-        )
-        help_btn.pack(side="left", padx=(12, 0))
-
         progress_row = ttk.Frame(footer)
         self._progress_row = progress_row
-        progress_row.grid(row=1, column=0, sticky="ew", padx=(0, 24), pady=(10, 0))
+        progress_row.grid(
+            row=1,
+            column=0,
+            sticky="ew",
+            padx=self._spacing(0, 24),
+            pady=self._spacing(10, 0),
+        )
         progress_row.grid_remove()
 
         self.progress_var = tk.DoubleVar()
@@ -1691,7 +2069,9 @@ class ScheduleAppUI:
             maximum=PROGRESS_MAX,
             style="Horizontal.TProgressbar",
         )
-        self.progress.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.progress.pack(
+            side="left", fill="x", expand=True, padx=self._spacing(0, 10)
+        )
 
         self._progress_pct = ttk.Label(
             progress_row,
@@ -1707,7 +2087,7 @@ class ScheduleAppUI:
             text=_PRINT_BUTTON_LABEL,
             underline=0,
             style=_STYLE_PRIMARY_BUTTON,
-            width=20,
+            width=26,
             cursor="hand2",
         )
         self.print_btn.grid(row=0, column=1, rowspan=2, sticky="nsew")
@@ -1727,9 +2107,9 @@ class ScheduleAppUI:
             The entry widget
         """
         wrap = ttk.Frame(parent, style=_STYLE_CARD_FRAME)
-        wrap.pack(fill="x", pady=8)
+        wrap.pack(fill="x", pady=self._px(8))
         ttk.Label(wrap, text=label, style=_STYLE_CARD_SUB_LABEL).pack(
-            anchor="w", pady=(0, 6)
+            anchor="w", pady=self._spacing(0, 6)
         )
 
         row = ttk.Frame(wrap, style=_STYLE_CARD_FRAME)
@@ -1737,7 +2117,7 @@ class ScheduleAppUI:
 
         entry = ttk.Entry(row)
         entry.insert(0, default_val)
-        entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        entry.pack(side="left", fill="x", expand=True, padx=self._spacing(0, 10))
 
         browse_button = ttk.Button(
             row,
@@ -1786,10 +2166,10 @@ class ScheduleAppUI:
         value = (path or "").strip()
         entry.delete(0, tk.END)
         if value:
-            entry.config(foreground=COLORS.text_main)
+            entry.config(foreground=self.colors.text_main)
             entry.insert(0, value)
         else:
-            entry.config(foreground=COLORS.text_dim)
+            entry.config(foreground=self.colors.text_dim)
             entry.insert(0, _PATH_PLACEHOLDER)
 
     def set_day_folder(self, path: str) -> None:
@@ -2025,7 +2405,8 @@ class ScheduleAppUI:
             if printer and printer != DEFAULT_PRINTER_LABEL
             else "Choose a printer"
         )
-        lines.append(f"Printer: {printer_label}")
+        if self._manifest_printer_label is not None:
+            self._manifest_printer_label.config(text=f"Printer\n{printer_label}")
         blocker = _manifest_blocker(selections, invalid, manifest, printer_label)
         if blocker:
             lines.append(f"Cannot print: {blocker}")
@@ -2069,7 +2450,7 @@ class ScheduleAppUI:
             self.print_btn.bind("<Return>", lambda _event: command())
             self.root.bind("<Alt-p>", lambda _event: command())
         if cancel_command is not None:
-            self.root.bind("<Escape>", lambda _event: cancel_command())
+            self.root.bind(_ESCAPE_EVENT, lambda _event: cancel_command())
 
     def set_inputs_enabled(self, enabled: bool) -> None:
         """Enable or disable all input widgets during processing.
@@ -2086,6 +2467,7 @@ class ScheduleAppUI:
         self._set_widget_state(self.printer_dropdown, state, "printer dropdown")
         self._set_widget_state(self._refresh_btn, state, "refresh button")
         self._set_widget_state(self._setup_toggle_btn, state, "setup toggle")
+        self._set_widget_state(self._reset_btn, state, "reset run")
         for shift_type, panel in self._shift_panels.items():
             self._set_shift_panel_enabled(shift_type, panel, state)
 
@@ -2157,7 +2539,7 @@ class ScheduleAppUI:
         if self._logs_btn is None:
             return
         if status_style == _STYLE_ERROR_LABEL:
-            self._logs_btn.pack(side="left", padx=(12, 0))
+            self._logs_btn.pack(side="left", padx=self._spacing(12, 0))
             return
         self._logs_btn.pack_forget()
 
@@ -2196,21 +2578,143 @@ class ScheduleAppUI:
         messagebox.showinfo(title, message)
 
     def show_help(self) -> None:
-        """Explain the print-run workflow in the operator's own terms."""
-        self.show_info(
-            "How to use ShiftPress",
-            "1. In Setup, choose the Night and Day template folders and a printer.\n\n"
-            "Select Apply to keep Setup changes, or Cancel to restore the previous "
-            "folders and printer.\n\n"
-            "2. Include the Night schedule, Day schedule, or both. Choose a single "
-            "date or date range for each included shift.\n\n"
-            "3. Review Print scope, then select Print. ShiftPress runs preflight checks "
-            "before opening Word and stops if a required template or printer is "
-            "unavailable.\n\n"
-            "Reset run restores the common Night-today and Day-tomorrow selection.\n\n"
-            "Keyboard: Alt+S opens Setup, Alt+P prints, Alt+H opens this help, and "
-            "Escape stops after the current document.",
+        """Open a themed, non-modal reference without losing the current run."""
+        if self._help_dialog is None:
+            self._create_help_dialog()
+        dialog = self._help_dialog
+        if dialog is None:
+            return
+        dialog.deiconify()
+        self._style_help_dialog()
+        left, top, right, bottom = _get_work_area(dialog)
+        width = min(self._px(640), right - left - self._px(32))
+        available_height = bottom - top - self._px(64)
+        height = min(self._px(610), available_height)
+        # Lay out at the chosen width before measuring wrapped, mixed-font text.
+        # A fixed height can clip just a few pixels and show a needless scrollbar.
+        dialog.geometry(f"{width}x{height}")
+        dialog.lift()
+        # Windows delivers child Configure events after the native frame maps;
+        # idle tasks alone leave first-open or previous-open text dimensions.
+        dialog.update()
+        if self._help_text is not None:
+            text = self._help_text
+            text_height = cast(int, text.count("1.0", "end", "update", "ypixels"))
+            text_height += 2 * int(text.cget("pady"))
+            chrome_height = dialog.winfo_height() - text.winfo_height()
+            height = min(text_height + chrome_height + self._px(8), available_height)
+        x = max(
+            left,
+            min(self.root.winfo_rootx() + self._px(48), right - width - self._px(16)),
         )
+        y = max(
+            top,
+            min(self.root.winfo_rooty() + self._px(24), bottom - height - self._px(48)),
+        )
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        dialog.minsize(min(width, self._px(420)), min(height, self._px(300)))
+        dialog.lift()
+        dialog.focus_force()
+        if self._help_text is not None:
+            self._help_text.focus_set()
+
+    def _create_help_dialog(self) -> None:
+        """Build readable help with native scrolling and an always-visible Close."""
+        dialog = tk.Toplevel(self.root)
+        self._help_dialog = dialog
+        dialog.withdraw()
+        dialog.title("How to use ShiftPress")
+        dialog.transient(self.root)
+        dialog.protocol("WM_DELETE_WINDOW", self._hide_help_dialog)
+        dialog.bind(_ESCAPE_EVENT, lambda _event: self._hide_help_dialog())
+        actions = ttk.Frame(dialog, padding=self._spacing(24, 12))
+        actions.pack(side="bottom", fill="x")
+        ttk.Button(
+            actions, text="Close", command=self._hide_help_dialog, width=12
+        ).pack(side="right")
+        content = ttk.Frame(dialog, padding=self._spacing(24, 20, 12, 0))
+        content.pack(fill="both", expand=True)
+        text = tk.Text(
+            content,
+            wrap="word",
+            font=FONTS.main,
+            borderwidth=0,
+            highlightthickness=0,
+            padx=self._px(4),
+            pady=self._px(4),
+            spacing3=self._px(12),
+            cursor="arrow",
+            takefocus=True,
+        )
+        self._help_text = text
+        scrollbar = ttk.Scrollbar(content, orient="vertical", command=text.yview)
+
+        def sync_scrollbar(first: str | float, last: str | float) -> None:
+            first_value, last_value = float(first), float(last)
+            scrollbar.set(first_value, last_value)
+            if first_value <= 0 and last_value >= 1:
+                scrollbar.pack_forget()
+            else:
+                scrollbar.pack(
+                    side="right", fill="y", padx=self._spacing(12, 0), before=text
+                )
+
+        text.configure(yscrollcommand=sync_scrollbar)
+        text.pack(fill="both", expand=True)
+        text.tag_configure("title", font=FONTS.section, spacing3=self._px(20))
+        text.tag_configure(
+            "heading", font=FONTS.card_title, spacing1=self._px(8), spacing3=self._px(6)
+        )
+        text.insert("end", "How to use ShiftPress\n", "title")
+        for heading, body in (
+            (
+                "1. Set up your sources",
+                "In Setup, choose the Night and Day template folders and a printer.\n"
+                "Select Apply to keep Setup changes, or Cancel to restore the previous folders and printer.",
+            ),
+            (
+                "2. Choose your schedules",
+                "Include the Night schedule, Day schedule, or both. Choose a single date or date range for each included shift.",
+            ),
+            (
+                "3. Review and print",
+                "Review Print scope, then select Print. ShiftPress runs preflight checks before opening Word and stops if a required template or printer is unavailable.",
+            ),
+            (
+                "Start a fresh run",
+                "Reset run restores the common Night-today and Day-tomorrow selection.",
+            ),
+            (
+                "Keyboard shortcuts",
+                "Alt+S opens Setup · Alt+P prints · Alt+H opens help.\n"
+                "Escape closes this help. In the main window, Escape stops after the current document.",
+            ),
+        ):
+            text.insert("end", heading + "\n", "heading")
+            text.insert("end", body + "\n")
+        text.configure(state="disabled")
+
+    def _style_help_dialog(self) -> None:
+        """Keep open help synchronized when the main window changes palette."""
+        if self._help_dialog is None or self._help_text is None:
+            return
+        self._help_dialog.configure(bg=self.colors.background)
+        self._help_text.configure(
+            background=self.colors.background,
+            foreground=self.colors.text_main,
+            selectbackground=self.colors.action,
+            selectforeground=self.colors.action_text,
+            inactiveselectbackground=self.colors.secondary,
+        )
+        self._help_text.tag_configure("heading", foreground=self.colors.action)
+        self._style_titlebar(self._help_dialog)
+
+    def _hide_help_dialog(self) -> None:
+        """Return to the help action without mutating print state."""
+        if self._help_dialog is not None:
+            self._help_dialog.withdraw()
+        if self._help_button is not None:
+            self._help_button.focus_set()
 
     def ask_yes_no(self, title: str, message: str) -> bool:
         """Ask the user a yes/no question.

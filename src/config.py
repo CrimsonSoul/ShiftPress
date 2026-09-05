@@ -27,13 +27,14 @@ class AppConfig:
     day_folder: str = ""
     night_folder: str = ""
     printer_name: str = ""
+    theme: str = "midnight"
 
     def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary.
 
         Returns:
             Dict with keys ``day_folder``, ``night_folder``,
-            and ``printer_name``.
+            ``printer_name``, and the dark color ``theme``.
         """
         return asdict(self)
 
@@ -52,6 +53,7 @@ class AppConfig:
             day_folder=str(data.get("day_folder", "") or ""),
             night_folder=str(data.get("night_folder", "") or ""),
             printer_name=str(data.get("printer_name", "") or ""),
+            theme="rose" if data.get("theme") == "rose" else "midnight",
         )
 
 

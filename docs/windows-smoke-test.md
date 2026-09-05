@@ -1,66 +1,63 @@
 # Windows Print Smoke Test
 
-Use this checklist on a Windows workstation with Microsoft Word, the intended
-printer, and representative Day and Night template folders. Unit tests mock the
-Windows-only interfaces; this checklist verifies the real Word COM and printer
-path before release.
+Before release, run this checklist on Windows with Microsoft Word, the intended
+physical printer, representative Day/Night template folders, and the release
+candidate executable (or Python 3.12 via `start_app.bat`). Automated tests and
+packaged startup checks do not establish physical printing.
 
 ## Preparation
 
-1. Install dependencies and launch ShiftPress with `start_app.bat`.
-2. Select **Setup…**, choose both template folders and the test printer, then
-   select **Apply**. Reopen Setup, make a harmless change, select **Cancel**, and
-   confirm the prior value is restored.
-3. Confirm the collapsed Setup card says **Templates configured** and names the
-   selected printer without exposing either folder path.
-4. Use dates that have known Day and Night templates. Keep the printed pages for
-   comparison with the manifest.
+1. Open **Setup…**, choose template folders and printer, then **Apply**. Reopen
+   Setup, change a value, and **Cancel**; verify the prior settings return.
+2. Confirm the summary identifies Night source, Day source, and printer
+   separately with recognizable folder identities. Configured paths must not
+   imply template or printer-device readiness.
+3. Choose dates with known templates. Keep source copies and printed pages for
+   comparison with the numbered **Print scope** manifest and Word activity.
 
-## Required Runs
+## Required runs
 
-For every run, compare the numbered **Print scope** manifest with both Word activity
-and the physical printer output.
+| Run         | Night      | Day      | Physical output                                         |
+| ----------- | ---------- | -------- | ------------------------------------------------------- |
+| Night only  | One date   | Disabled | One Night document; no Day document opens or prints.    |
+| Day only    | Disabled   | One date | One Day document; no Night document opens or prints.    |
+| Both        | One date   | One date | Exactly two listed documents in manifest order.         |
+| Mixed scope | Date range | One date | Every listed Night date and only the selected Day date. |
 
-| Run | Night selection | Day selection | Expected result |
-| --- | --- | --- | --- |
-| Night only | Enabled, one date | Disabled | Exactly one Night document prints. No Day document opens or prints. |
-| Day only | Disabled | Enabled, one date | Exactly one Day document prints. No Night document opens or prints. |
-| Both | Enabled, one date | Enabled, one date | Exactly the two listed documents print in manifest order. |
-| Mixed scope | Enabled, date range | Enabled, one date | Night prints every listed range document; Day prints only its listed date. |
+## State and safety
 
-## State and Safety Checks
+- Fresh launch and **Reset run** select Night today and Day tomorrow. Changes
+  to one shift never change the other; values survive mode changes and
+  disabling/re-enabling.
+- Disable either shift: its state becomes **Not included**, its manifest jobs
+  disappear, and the Print count decreases. Its missing/invalid folder must not
+  block the enabled shift. Disabling both blocks printing.
+- An invalid enabled range blocks all printing and identifies that shift.
+  Missing/ambiguous selected templates fail before document processing.
+- During a multi-document run, selection/setup controls are locked. Cancel
+  stops before the next document after an active Word call finishes; Word
+  resources are released. No unlisted document prints.
+- Progress advances after each attempt and uses the manifest total. Final state
+  distinguishes all-success, partial failure, and cancellation with exact
+  counts. Compare sent-to-printer claims with the actual pages.
+- Check body/header/footer dates. Source documents remain unchanged. A template
+  with no supported date text and an unavailable requested printer must not
+  print; macro-disable failure must block Word initialization.
+- Failures identify the affected shift/date; failed document attempts appear in
+  CSV reports. Settings-save failures are visible before printing and on close;
+  logs retain diagnostic detail.
+- Inspect main/Setup at Windows text scaling and constrained display size:
+  no unreachable controls, keyboard focus follows scrolling, long values wrap,
+  and shortcuts, Help, Apply/Cancel, and Escape behave as described.
+- Switch between **Midnight** and **Rose**. Main, Setup, and calendars remain
+  dark, selections and processing locks are unchanged, and the theme restores
+  after closing/reopening. There is no light or system-following theme.
 
-- Change Night dates and confirm Day dates do not change; then repeat in the
-  other direction.
-- Disable either shift and confirm its card says **Not included**, the manifest
-  removes it, and the button count decreases before printing.
-- Disable both shifts and confirm printing is blocked.
-- Select an invalid range for one enabled shift and confirm no documents print.
-- Start a multi-document run, select **Cancel**, and confirm no unlisted
-  documents print after cancellation takes effect.
-- Confirm the progress percentage and final status use the manifest document
-  count, not a fixed Day-plus-Night multiplier.
-- Confirm missing-template and Word/printer failures name the affected shift and
-  date, preserve the source documents, and appear in the failure report.
+## Evidence
 
-## Result
-
-Record the Windows version, Word version, printer name, application commit, and
-pass/fail result for each required run. A release is print-verified only after
-all four runs and the state and safety checks pass on Windows.
-
-## Refresh the README screenshot
-
-The README has no screenshot. Capture one here, where a real Windows instance
-with Microsoft Word exists:
-
-1. Launch ShiftPress with both template folders configured and a printer
-   selected.
-2. Capture the main window to `docs/screenshots/main.png`.
-3. Restore the README `## Preview` section above `## Core Features`:
-
-   ```markdown
-   ## Preview
-
-   ![Main window](docs/screenshots/main.png)
-   ```
+Record tester/date, Windows and Word versions, printer, exact application commit
+and artifact, and pass/fail for each run and safety check. A release is
+print-verified only after every required check passes with physical output.
+Keep evidence in the release/task record rather than a new repository report.
+Any screenshot added to README must show this genuine current Windows runtime;
+do not reuse an obsolete screenshot or fabricate one.

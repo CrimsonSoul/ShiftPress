@@ -57,6 +57,7 @@ class TestShiftPressApp:
             mock_ui.get_day_folder.return_value = "/tmp/day"
             mock_ui.get_night_folder.return_value = "/tmp/night"
             mock_ui.get_printer_name.return_value = "Test Printer"
+            mock_ui.get_theme.return_value = "rose"
             mock_ui.get_available_printers.return_value = ["Test Printer"]
             mock_ui.get_shift_selections.return_value = (
                 ShiftSelection(
@@ -130,6 +131,7 @@ class TestShiftPressApp:
 
         assert request is not None
         assert error is None
+        assert request.theme == "rose"
         mock_validate.assert_called_once_with("/tmp/night")
         assert [job.shift_type for job in request.manifest] == ["night"]
 
@@ -332,6 +334,7 @@ class TestShiftPressApp:
         app._processing_thread = None
         app._on_close()
         app.root.destroy.assert_called_once()
+        assert app.config_manager.save.call_args.args[0].theme == "rose"
 
     def test_on_close_with_active_thread(self, app):
         """Should cancel and join thread before destroying window."""
@@ -450,6 +453,68 @@ class TestShiftPressApp:
             assert not any(
                 call.kwargs.get("level") == "success"
                 for call in app.ui.update_status.call_args_list
+            )
+
+    @pytest.mark.parametrize("ending", ["complete", "cancel", "exception", "close"])
+    def test_batch_preserves_prior_failures_on_every_exit(
+        self, app, isolate_user_data_dir, ending
+    ):
+        """A stopped batch must retain exactly one CSV and summary of failed attempts."""
+        word_proc = MagicMock()
+        word_proc.__enter__.return_value = word_proc
+        word_proc.__exit__.return_value = False
+        attempts = 0
+
+        def print_attempt(*_args):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                if ending in ("cancel", "close"):
+                    app._cancel_event.set()
+                if ending == "close":
+                    app._closing = True
+                return False, "Printer unavailable"
+            if ending == "exception":
+                raise RuntimeError("Worker stopped unexpectedly")
+            return True, None
+
+        word_proc.print_document.side_effect = print_attempt
+        request = _request(
+            PrintJob(date(2026, 1, 14), "night", "Wednesday Night", "/tmp/night"),
+            PrintJob(date(2026, 1, 15), "day", "THIRD Thursday", "/tmp/day"),
+        )
+        with patch.object(
+            main_module, "WordProcessor", return_value=word_proc
+        ), patch.object(
+            app, "_write_failure_report", wraps=app._write_failure_report
+        ) as write_report, patch.object(
+            app, "_show_failure_summary"
+        ) as summary:
+            app._process_batch(request)
+            _run_scheduled_callbacks(app)
+            write_report.assert_called_once()
+            if ending == "close":
+                summary.assert_not_called()
+            else:
+                summary.assert_called_once()
+                app.ui.set_inputs_enabled.assert_called_with(True)
+
+        assert attempts == (1 if ending in ("cancel", "close") else 2)
+        word_proc.__exit__.assert_called_once()
+        reports = list(isolate_user_data_dir.glob("failure_report_*.csv"))
+        assert len(reports) == 1
+        with reports[0].open(newline="", encoding="utf-8") as report:
+            assert list(csv.DictReader(report)) == [
+                {
+                    "date": "01/14/2026",
+                    "shift": "night",
+                    "template": "Wednesday Night",
+                    "error": "Printer unavailable",
+                }
+            ]
+        if ending == "cancel":
+            app.ui.update_status.assert_any_call(
+                "Cancelled after 1 of 2 schedules", 50, level="info"
             )
 
     def test_write_failure_report_creates_csv(self, app, tmp_path):
@@ -604,6 +669,7 @@ class TestShiftPressApp:
             day_folder="/saved/day",
             night_folder="/saved/night",
             printer_name="Saved Printer",
+            theme="rose",
         )
         app.config_manager.load.return_value = mock_config
 
@@ -619,6 +685,7 @@ class TestShiftPressApp:
         app.ui.set_night_folder.assert_called_with("/saved/night")
         app.ui.printer_var.set.assert_called_with("Saved Printer")
         app.ui.refresh_setup_summary.assert_called_once()
+        app.ui.set_theme.assert_called_with("rose")
 
     def test_load_config_exception_shows_warning(self, app):
         """A load failure should give recovery guidance without raw diagnostics."""
@@ -777,6 +844,7 @@ class TestShiftPressApp:
             saved.night_folder,
             saved.printer_name,
         ) == ("/tmp/day", "/tmp/night", "Test Printer")
+        assert saved.theme == request.theme
         assert app._preflight_wp is None
         mock_wp_class.assert_not_called()
 

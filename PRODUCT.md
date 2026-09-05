@@ -6,71 +6,69 @@
 
 web
 
-## Users
+This is an Impeccable design-language category only. ShiftPress ships as a
+Windows desktop Tkinter/ttk application using Microsoft Word COM.
 
-The primary user is an operator responsible for preparing and printing shift
-schedules. The exact organizational role is not yet confirmed.
+## Users and Purpose
 
-## Product Purpose
+Operators prepare dated shift schedules from Word templates. Success means
+printing exactly the needed documents without reprinting an already-used shift.
+No user research, analytics, testimonials, or performance benchmarks are
+available; do not invent them.
 
-ShiftPress is a Windows desktop utility that turns Microsoft Word schedule
-templates into dated print jobs. Success means the operator can deliberately
-print only the schedules needed for a run without reprinting an already-used
-shift.
+## Print contract
 
-## Positioning
+- Night and Day are independently included and dated, each with a single date
+  or inclusive range. Fresh launch and **Reset run** enable both in Single date
+  mode: Night today, Day tomorrow, using local calendar dates.
+- Persist only template folders, printer, and dark color theme, never dates, modes, or
+  include toggles. Disabling a shift or switching modes preserves its values;
+  only enabled shifts and their active modes contribute jobs or validation.
+- At least one job is required. Invalid enabled dates, missing required folders,
+  missing printer selection, or unavailable date controls block Print locally.
+  Filesystem, template, Word, and device checks belong to preflight; selected
+  counts must never imply those checks already passed.
+- Collect selections on the Tkinter thread and pass the same immutable manifest
+  through preflight, confirmation, and the worker; workers never read Tk state.
+  Jobs sort by date, with Night before Day for ties. Preview, large-batch
+  confirmation, progress, results, and CSV failures must describe those actual
+  jobs and the chosen printer.
+- Preserve scheduling/template naming rules, range limits, root-contained paths,
+  selective template preflight, and ambiguity rejection. Disabled shifts need
+  no valid folder or template. Missing or ambiguous selected templates block
+  before document processing.
+- Lock setup and selection controls during a batch; keep Cancel/Escape and
+  safe window-close behavior. Reset and keyboard Setup cannot bypass the lock.
+  Check cancellation before every document; an
+  active Word call is not interruptible. Always release Word and restore UI
+  state. Preserve bounded transient COM retries and per-document CSV failures.
+  Retain failures already recorded if the run is cancelled, aborted, or closed.
+- Advance progress after a document attempt finishes. Distinguish full success,
+  partial failure, and cancellation, with accurate counts and shift/date errors.
+  “Sent to printer” does not establish that physical pages were printed.
+- Open source documents read-only; replace dates across body/header/footer story
+  ranges. Fail closed if macros cannot be disabled, the requested printer cannot
+  be selected, any story traversal or date-processing operation fails, or no
+  supported date was replaced. Never modify source templates. Close documents
+  and quit Word without saving. A cleanup error after successful submission is
+  logged separately and must not turn the submitted job into a retryable failure.
 
-ShiftPress combines shift-specific schedule rules, template lookup, date
-replacement, printer selection, and auditable failure handling in one focused
-operator workflow.
+## Identity and settings
 
-## Operating Context
+Preserve the ShiftPress identity. `src/app_paths.py` retains active
+`ShiftPress`/`.shiftpress` and legacy `ShiftPrint`/`.shiftprint` paths. When the
+active config is absent, `src/config.py` checks the legacy data directory and
+older working-directory config. An existing active config always wins.
 
-- The app runs on Windows and controls Microsoft Word through COM automation.
-- Day and Night schedules use separate template folders and naming rules.
-- A common run prints the selected date's Night schedule and the following
-  date's Day schedule.
-- Day and Night work must remain independent: each can use its own single date
-  or date range within the same run.
-- Operators may also need single-schedule and multi-date batch runs.
+Write settings atomically. Rename a migration source to `config.json.migrated`
+only after saving succeeds. If saving fails, keep the readable settings in memory
+and the legacy file intact for retry. Migration failure must not prevent
+startup; logs stay in their original location. Surface settings-save failures
+before printing and on close. Keep the external Sonar key
+`CrimsonSoul_ShiftPrint` to preserve the hosted project linkage.
 
-## Capabilities and Constraints
+## Related guides
 
-- Preserve template-folder configuration, printer selection, date replacement,
-  preflight checks, background processing, cancellation, progress reporting,
-  and CSV failure reports.
-- A print run must contain at least one selected schedule job.
-- Validation and template preflight must apply only to enabled schedule jobs.
-- Job counts, progress, confirmation copy, and completion summaries must reflect
-  the schedules actually selected.
-- Windows, Microsoft Word, and `pywin32` are required for real document printing.
-- The repository's automated tests mock Windows-only dependencies so logic and
-  quality gates can run outside Windows.
-- The `web` platform value above describes the closest Impeccable interface
-  design-language category; the shipped product itself is a Windows desktop
-  Tkinter application.
-
-## Brand Commitments
-
-- Preserve the ShiftPress name.
-- Application icons live at `icon.ico` and `icon.png`, regenerated from
-  `tools/make_icon.py`; see the Icon section of DESIGN.md.
-- The interface should use direct, operational language and avoid implying that
-  configured template folders are automatically selected for printing.
-
-## Evidence on Hand
-
-- Current Tkinter implementation: `src/ui.py`
-- Current controller and print workflow: `src/main.py`
-- Existing automated tests: `tests/`
-- Existing interface screenshot: `docs/screenshots/main.png`
-- No user research, usage analytics, testimonials, or performance benchmarks
-  are currently available and future work must not fabricate them.
-
-## Product Principles
-
-1. Make print intent explicit before execution.
-2. Keep Day and Night schedules independently controllable.
-3. Show the exact job count and scope before paper is consumed.
-4. Preserve fast repeat use for the common Night-then-next-Day workflow.
-5. Fail before printing when required inputs or templates are unavailable.
+[DESIGN.md](DESIGN.md) owns visual rules and icons. The
+[Windows smoke test](docs/windows-smoke-test.md) owns real Word/physical-printer
+evidence; automated tests alone do not establish that boundary.

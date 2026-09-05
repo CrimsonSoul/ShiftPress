@@ -128,7 +128,8 @@ class WordProcessor:
         """Shutdown the Word application instance."""
         if self.word_app:
             try:
-                self.word_app.Quit()
+                # Discard edited copies even if an individual Close failed.
+                self.word_app.Quit(CLOSE_NO_SAVE)
                 logger.info("Word application shut down")
             except Exception as e:
                 logger.warning(f"Error shutting down Word: {e}")
@@ -455,10 +456,8 @@ class WordProcessor:
             # Background=False ensures synchronous printing
             self.safe_com_call(doc.PrintOut, False)
 
-            # Close document
-            self.safe_com_call(doc.Close, CLOSE_NO_SAVE)
-            doc = None
-
+            # Submission succeeded. A later cleanup failure must not label this
+            # document as unprinted and encourage a duplicate retry.
             logger.info(f"Successfully printed: {template_name}")
             return True, None
 
@@ -630,27 +629,25 @@ class WordProcessor:
             ("^u8195", " ", "em space"),
         ]
 
-        for find_code, replace_with, desc in normalizations:
-            try:
-                for story in self._iter_story_ranges(doc):
-                    f = story.Find
-                    f.ClearFormatting()
-                    f.Replacement.ClearFormatting()
-                    f.Execute(
-                        find_code,
-                        False,  # MatchCase
-                        False,  # MatchWholeWord
-                        False,  # MatchWildcards (must be False for ^codes)
-                        False,  # MatchSoundsLike
-                        False,  # MatchAllWordForms
-                        True,  # Forward
-                        WD_FIND_CONTINUE,  # Wrap
-                        False,  # Format
-                        replace_with,
-                        WD_REPLACE_ALL,  # Replace
-                    )
-            except Exception as e:
-                logger.debug(f"{desc} normalization: {e}")
+        for find_code, replace_with, _desc in normalizations:
+            for story in self._iter_story_ranges(doc):
+                f = story.Find
+                self.safe_com_call(f.ClearFormatting)
+                self.safe_com_call(f.Replacement.ClearFormatting)
+                self.safe_com_call(
+                    f.Execute,
+                    find_code,
+                    False,  # MatchCase
+                    False,  # MatchWholeWord
+                    False,  # MatchWildcards (must be False for ^codes)
+                    False,  # MatchSoundsLike
+                    False,  # MatchAllWordForms
+                    True,  # Forward
+                    WD_FIND_CONTINUE,  # Wrap
+                    False,  # Format
+                    replace_with,
+                    WD_REPLACE_ALL,  # Replace
+                )
 
     def _execute_replace(
         self,
@@ -670,12 +667,9 @@ class WordProcessor:
             True if at least one replacement was made
         """
         any_replaced = False
-        try:
-            for story in self._iter_story_ranges(doc):
-                if self._run_find_replace(story, find_text, replace_text):
-                    any_replaced = True
-        except Exception as e:
-            logger.warning(f"Error during find/replace: {e}")
+        for story in self._iter_story_ranges(doc):
+            if self._run_find_replace(story, find_text, replace_text):
+                any_replaced = True
         return any_replaced
 
     def _iter_story_ranges(self, doc: Any) -> Iterator[Any]:
@@ -688,15 +682,13 @@ class WordProcessor:
             Word Range objects from the document's StoryRanges collection.
         """
 
-        try:
-            for story in doc.StoryRanges:
-                # Include this story and its linked NextStoryRange chain
-                cur = story
-                while cur:
-                    yield cur
-                    cur = getattr(cur, "NextStoryRange", None)
-        except Exception as e:
-            logger.warning(f"Error iterating story ranges: {e}")
+        # A traversal failure is not the end of the document. Propagate it so
+        # a body match cannot mask an unprocessed header/footer or linked story.
+        for story in self.safe_com_call(getattr, doc, "StoryRanges"):
+            cur = story
+            while cur:
+                yield cur
+                cur = self.safe_com_call(getattr, cur, "NextStoryRange")
 
     def _run_find_replace(
         self, range_obj: Any, find_text: str, replace_text: str
@@ -712,32 +704,28 @@ class WordProcessor:
         Returns:
             True if the pattern was found and replaced
         """
-        try:
-            f = range_obj.Find
-            f.ClearFormatting()
-            f.Replacement.ClearFormatting()
-            # Execute: FindText, MatchCase, MatchWholeWord, MatchWildcards,
-            #          MatchSoundsLike, MatchAllWordForms, Forward, Wrap, Format,
-            #          ReplaceWith, Replace
-            result = f.Execute(
-                find_text,  # FindText
-                False,  # MatchCase
-                False,  # MatchWholeWord
-                True,  # MatchWildcards
-                False,  # MatchSoundsLike
-                False,  # MatchAllWordForms
-                True,  # Forward
-                WD_FIND_CONTINUE,  # Wrap
-                False,  # Format
-                replace_text,  # ReplaceWith
-                WD_REPLACE_ALL,  # Replace
-            )
-            if result:
-                logger.debug(f"Find/replace matched: '{find_text}' -> '{replace_text}'")
-            return bool(result)
-        except Exception as e:
-            logger.warning(f"Error in find/replace operation: {e}")
-            return False
+        f = range_obj.Find
+        self.safe_com_call(f.ClearFormatting)
+        self.safe_com_call(f.Replacement.ClearFormatting)
+        # A valid no-match is False; an exhausted COM error must reach the
+        # document boundary and prevent printing a partially updated schedule.
+        result = self.safe_com_call(
+            f.Execute,
+            find_text,  # FindText
+            False,  # MatchCase
+            False,  # MatchWholeWord
+            True,  # MatchWildcards
+            False,  # MatchSoundsLike
+            False,  # MatchAllWordForms
+            True,  # Forward
+            WD_FIND_CONTINUE,  # Wrap
+            False,  # Format
+            replace_text,  # ReplaceWith
+            WD_REPLACE_ALL,  # Replace
+        )
+        if result:
+            logger.debug(f"Find/replace matched: '{find_text}' -> '{replace_text}'")
+        return bool(result)
 
     def __del__(self) -> None:
         """Safety net: ensure COM resources are released if not explicitly shut down.

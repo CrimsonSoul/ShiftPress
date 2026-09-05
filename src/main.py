@@ -26,7 +26,7 @@ from .constants import (
 from .logger import setup_logging, get_logger
 from .path_validation import validate_folder_path
 from .print_manifest import PrintJob, ShiftSelection, build_print_manifest
-from .ui import ScheduleAppUI
+from .ui import ScheduleAppUI, configure_windows_dpi
 from .word_processor import (
     WordProcessor,
     TemplateLookupError,
@@ -63,6 +63,7 @@ class _BatchRequest:
     printer_name: str
     day_folder: str
     night_folder: str
+    theme: str = "midnight"
 
 
 def _batch_stop_status(completed_jobs: int, total_jobs: int) -> str:
@@ -137,6 +138,7 @@ class ShiftPressApp:
         """Load configuration and apply to UI."""
         try:
             config = self.config_manager.load()
+            self.ui.set_theme(config.theme)
             self.ui.set_day_folder(config.day_folder)
             self.ui.set_night_folder(config.night_folder)
             if config.printer_name and self.ui.printer_var:
@@ -226,6 +228,7 @@ class ShiftPressApp:
                 printer_name=printer_name,
                 day_folder=folders.get("day", ""),
                 night_folder=folders.get("night", ""),
+                theme=self.ui.get_theme(),
             ),
             None,
         )
@@ -495,6 +498,7 @@ class ShiftPressApp:
             day_folder=request.day_folder,
             night_folder=request.night_folder,
             printer_name=request.printer_name,
+            theme=request.theme,
         )
         if not self._save_config(config):
             self._safe_after(
@@ -522,9 +526,6 @@ class ShiftPressApp:
                     level="error",
                 )
             )
-            report_path = self._write_failure_report(failed_operations)
-            snapshot = list(failed_operations)
-            self._safe_after(lambda: self._show_failure_summary(snapshot, report_path))
             return
 
         schedule_noun = "schedule" if total_jobs == 1 else "schedules"
@@ -601,6 +602,14 @@ class ShiftPressApp:
             logger.exception("Error during batch processing")
             self._show_batch_error(completed_jobs, total_jobs)
         finally:
+            # Retain attempted-job failures on every exit, including cancellation
+            # and window close. _safe_after skips only the UI when closing.
+            if failed_operations:
+                report_path = self._write_failure_report(failed_operations)
+                snapshot = list(failed_operations)
+                self._safe_after(
+                    lambda: self._show_failure_summary(snapshot, report_path)
+                )
             self._safe_after(self._reset_ui)
 
     def _on_close(self) -> None:
@@ -630,6 +639,7 @@ class ShiftPressApp:
                 day_folder=(self.ui.get_day_folder() or "").strip(),
                 night_folder=(self.ui.get_night_folder() or "").strip(),
                 printer_name=printer,
+                theme=self.ui.get_theme(),
             )
             if not self._save_config(config):
                 self.ui.show_warning(
@@ -674,7 +684,7 @@ class ShiftPressApp:
         message += f"\n\nLog file:\n{log_path}"
         message += "\n\nTip: Click 'Open logs' in the app footer."
 
-        self.ui.show_warning("Processing Completed with Errors", message)
+        self.ui.show_warning("Print failures", message)
 
     def _write_failure_report(
         self, failed_operations: list[FailedOperation]
@@ -720,6 +730,7 @@ def main() -> None:
     logger.info("Starting ShiftPress")
 
     try:
+        configure_windows_dpi()
         root = tk.Tk()
         app = ShiftPressApp(root)
         app.ui.run()
