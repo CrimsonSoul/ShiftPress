@@ -1,119 +1,52 @@
 # ShiftPress
 
-ShiftPress is a Windows desktop app that batch-prints shift schedule templates via Microsoft Word COM automation.
+A Windows desktop utility that batch-prints dated shift schedules from Microsoft
+Word templates. Requires Windows, Microsoft Word, and a printer; the native
+Tkinter/ttk app uses Python 3.12, pywin32, and tkcalendar.
 
-![Platform](https://img.shields.io/badge/platform-Windows-0a7ea4) ![Language](https://img.shields.io/badge/language-Python%203.12-2ea043) ![UI](https://img.shields.io/badge/ui-Tkinter%2Fttk-4b5563) ![Automation](https://img.shields.io/badge/automation-Word%20COM-1f6feb)
+## Run
 
-## Snapshot
+Use `setup.bat` to install dependencies and `start_app.bat` to launch, or run:
 
-- Production-focused Word automation: open, replace, print, and close with cleanup safeguards
-- Domain logic handles complex monthly rotation scheduling (e.g. "third Thursday" patterns)
-- Defensive workflow with preflight checks, per-document retry paths, and CSV failure reporting
-- Modular architecture with strong unit-test coverage and static quality gates
-- Packaged as a single-file executable for non-technical end users via PyInstaller
-
-## Core Features
-
-- Independent Day and Night print selections with single-date or date-range
-  scope for each shift
-- Exact preflight-neutral print manifest showing the selected dates, document
-  count, and printer before a run starts
-- Date replacement across body, header, and footer story ranges
-- Template path, printer, and date-range preflight validation before any processing begins
-- Ambiguous template names are rejected at preflight rather than resolved silently
-- Per-document retry handling for transient COM errors with structured failure logging
-- Cancelable background processing with responsive UI progress updates
-- Timestamped CSV failure reports for audit and retry workflows
-
-## Architecture
-
-- `src/main.py` — orchestration and workflow control
-- `src/ui.py` — Tkinter/ttk interface layer
-- `src/word_processor.py` — Word COM automation lifecycle (open, replace, print, close)
-- `src/print_manifest.py` — shift selection, validation, and print manifest construction
-- `src/scheduler.py` — date resolution and template path logic
-- `src/config.py` — config management
-- `src/path_validation.py` — path traversal and filename safety checks
-
-## Tech Stack
-
-| Layer | Technology |
-| --- | --- |
-| Language | Python 3.12 |
-| UI | Tkinter/ttk |
-| Office integration | pywin32 (Word COM) |
-| Date picker | tkcalendar |
-| Testing | pytest + pytest-cov |
-| Quality | black + mypy + pylint |
-| Packaging | PyInstaller |
-
-## Quick Start
-
-```bash
+```bat
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 python main.py
 ```
 
-Windows helper scripts:
+1. Open **Setup…**, choose Night/Day template folders and a printer, then
+   **Apply**. **Cancel** restores the settings present when Setup opened.
+2. Include Night, Day, or both; choose a single date or independent range for
+   each. A fresh run defaults to Night today and Day tomorrow.
+3. Review **Print scope** and the document count, then print. Preflight checks
+   the selected templates before processing starts. **Cancel** stops before the
+   next document; an active Word call must finish first.
 
-- `setup.bat` — installs all dependencies into a virtualenv
-- `start_app.bat` — activates the environment and launches the app
+**Reset run** restores the daily defaults. **How to use** explains the workflow;
+keyboard shortcuts are Alt+S for Setup, Alt+P for Print, Alt+H for Help, and
+Escape for cancellation.
 
-## Quality and Testing
+Templates remain unchanged. Date replacement covers body, header, and footer
+story ranges. Printing stops if macros cannot be disabled, the requested
+printer cannot be selected, or no supported date text is found. Missing or
+ambiguous templates block preflight. Failed documents receive CSV reports.
 
-```bash
-pip install -r requirements-dev.txt
-pytest                           # run test suite with coverage
-black --check src tests          # formatting check
-mypy src                         # type checking
-pylint src --fail-under=8.0      # linting gate
-```
+## Development and releases
 
-All four gates run in CI on pushes and pull requests to `main`. The test suite
-mocks all Windows-only modules so it can run on any platform.
+Install `requirements-dev.txt` for development. [AGENTS.md](AGENTS.md) owns
+verification commands and protected publication/release rules. Non-Windows
+tests mock Windows dependencies; real Word COM and physical printing require
+the [Windows smoke test](docs/windows-smoke-test.md) before release.
 
-Before a release, use the
-[Windows print smoke test](docs/windows-smoke-test.md) to verify real Word COM
-and physical printer behavior for Night-only, Day-only, both-shift, and mixed
-scope runs.
+Each merged `main` push produces a PyInstaller executable artifact named
+`ShiftPress-v<version>-<commit>`, retained for seven days. Release versions come
+only from `src/__init__.py`; a published release requires a committed bump and
+an explicitly authorized Build dispatch on `main` with `create_release` enabled.
 
-## Releases
+Read [PRODUCT.md](PRODUCT.md) for behavior, [DESIGN.md](DESIGN.md) for native UI
+rules, and the [surface brief](.impeccable/surfaces/src-ui-py.md) for UI scope.
+The controller is `src/main.py`, UI `src/ui.py`, job model
+`src/print_manifest.py`, and Word integration `src/word_processor.py`.
 
-`main` is the sole long-lived branch. Every push to it runs the quality gates,
-then builds a Windows executable and uploads it as
-`ShiftPress-v<version>-<commit>`, so a downloadable build always exists for the
-commit you are working on. Push builds expire after 7 days.
-
-The version is read from `__version__` in `src/__init__.py`; it is not entered
-by hand. To cut a published release:
-
-1. Bump `__version__` and commit.
-2. Run the **Build** workflow via `workflow_dispatch` with `create_release`
-   enabled.
-
-The build runs only after the quality gates pass, and the tag, artifact name,
-and in-app version all come from that one value.
-
-## Security
-
-- Word documents open in read-only mode during processing; originals are never modified
-- Word macros are force-disabled before document open; ShiftPress stops if that safety setting cannot be applied
-- Path validation blocks traversal outside configured template root directories
-- Template names that collide after normalization are rejected, so a run can never
-  print an arbitrary file chosen by directory order
-- Date range limits prevent runaway batch operations
-- Config writes are atomic; all operations are logged with structured timestamps
-
-## Project Layout
-
-- `main.py` — top-level entry point
-- `src/` — application modules (controller, UI, scheduler, COM processor, config, validation)
-- `tests/` — unit tests and module fixtures
-- `.github/workflows/build.yml` — quality gates on every push, plus the
-  on-demand Windows build and release workflow via PyInstaller
-
-## License
-
-MIT (see `LICENSE`)
+MIT licensed; see [LICENSE](LICENSE).

@@ -12,6 +12,17 @@ from src.config import AppConfig, ConfigManager
 class TestAppConfig:
     """Tests for AppConfig dataclass."""
 
+    def test_theme_survives_settings_round_trip(self):
+        """Saving Rose must restore Rose instead of silently resetting the theme."""
+        config = AppConfig.from_dict({"theme": "rose"})
+        assert config.to_dict().get("theme") == "rose"
+
+    def test_unsupported_or_legacy_theme_falls_back_to_dark_midnight(self):
+        """Old and edited settings must never select a light or unknown palette."""
+        for value in (None, "light", "unknown", [], {}):
+            config = AppConfig.from_dict({"theme": value})
+            assert config.to_dict().get("theme") == "midnight"
+
     def test_default_values(self):
         """Default config should have empty strings."""
         config = AppConfig()
@@ -42,6 +53,7 @@ class TestAppConfig:
             "day_folder": "/path/to/day",
             "night_folder": "/path/to/night",
             "printer_name": "My Printer",
+            "theme": "midnight",
         }
 
     def test_from_dict(self):

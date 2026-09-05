@@ -4,7 +4,7 @@ Unit tests for word_processor module.
 
 import os
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 from pathlib import Path
 from datetime import date
 
@@ -360,6 +360,198 @@ class TestWordProcessor:
         success, error = wp.print_document("/tmp", "Test", date(2026, 1, 14), "Printer")
         assert success is False
         assert "not initialized" in error.lower()
+
+    @pytest.fixture
+    def printable_doc(self, wp, tmp_path):
+        """Keep file lookup and date processing real; fake only Word's COM objects."""
+        (tmp_path / "Wednesday.docx").write_text("original template")
+        wp._initialized = True
+        wp.word_app = MagicMock()
+        doc = MagicMock(ProtectionType=-1)
+        body = MagicMock(NextStoryRange=None)
+        # No normalization matches; a supported date is present in the body.
+        body.Find.Execute.side_effect = lambda *args: bool(args[3])
+        doc.StoryRanges = [body]
+        wp.word_app.Documents.Open.return_value = doc
+        return doc
+
+    @pytest.mark.parametrize("matching_story", ["body", "header", "linked_footer"])
+    def test_all_stories_are_processed_before_one_submission(
+        self, wp, printable_doc, tmp_path, matching_story
+    ):
+        """A date in any supported story is sufficient after all stories succeed."""
+        doc = printable_doc
+        body = doc.StoryRanges[0]
+        footer = MagicMock(NextStoryRange=None)
+        header = MagicMock(NextStoryRange=footer)
+        doc.StoryRanges = [body, header]
+        events = []
+        for name, story in (
+            ("body", body),
+            ("header", header),
+            ("linked_footer", footer),
+        ):
+
+            def execute(*args, story_name=name):
+                events.append(story_name)
+                return bool(args[3]) and story_name == matching_story
+
+            story.Find.Execute.side_effect = execute
+        doc.PrintOut.side_effect = lambda *_args: events.append("print")
+        doc.Close.side_effect = lambda *_args: events.append("close")
+
+        result = wp.print_document(
+            str(tmp_path), "Wednesday", date(2026, 1, 14), "Test Printer"
+        )
+
+        assert result == (True, None)
+        # Nine normalizations and six date patterns visit the full linked chain.
+        assert events == ["body", "header", "linked_footer"] * 15 + ["print", "close"]
+        assert body.Find.Execute.call_args_list == header.Find.Execute.call_args_list
+        assert header.Find.Execute.call_args_list == footer.Find.Execute.call_args_list
+        wp.word_app.Documents.Open.assert_called_once_with(
+            str(tmp_path / "Wednesday.docx"), False, True
+        )
+        assert wp.word_app.ActivePrinter == "Test Printer"
+        doc.PrintOut.assert_called_once_with(False)
+        doc.Close.assert_called_once_with(0)
+
+    @pytest.mark.parametrize(
+        "failure", ["replacement", "normalization", "collection", "linked_story"]
+    )
+    def test_partial_date_processing_never_prints(
+        self, wp, printable_doc, tmp_path, failure
+    ):
+        """A body match cannot excuse failing to process another document story."""
+        doc = printable_doc
+        body = doc.StoryRanges[0]
+        header = MagicMock(NextStoryRange=None)
+        doc.StoryRanges = [body, header]
+        if failure in ("replacement", "normalization"):
+
+            def execute(*args):
+                if bool(args[3]) == (failure == "replacement"):
+                    raise RuntimeError("Header date processing failed")
+                return False
+
+            header.Find.Execute.side_effect = execute
+        elif failure == "collection":
+
+            def stories():
+                yield body
+                raise RuntimeError("Story collection failed")
+
+            doc.StoryRanges = MagicMock()
+            doc.StoryRanges.__iter__.side_effect = stories
+        else:
+            type(body).NextStoryRange = PropertyMock(
+                side_effect=RuntimeError("Linked story failed")
+            )
+
+        success, error = wp.print_document(
+            str(tmp_path), "Wednesday", date(2026, 1, 14), "Test Printer"
+        )
+
+        assert success is False
+        assert "failed" in error.lower()
+        doc.PrintOut.assert_not_called()
+        doc.Close.assert_called_with(0)
+        assert (tmp_path / "Wednesday.docx").read_text() == "original template"
+
+    @pytest.mark.parametrize("recovers", [True, False])
+    def test_date_replacement_retries_busy_word_without_ignoring_exhaustion(
+        self, wp, printable_doc, tmp_path, recovers
+    ):
+        """Transient faults retry; exhausted faults block PrintOut even after a match."""
+        doc = printable_doc
+        header = MagicMock(NextStoryRange=None)
+        attempts = 0
+
+        def execute(*args):
+            nonlocal attempts
+            if not args[3]:
+                return False
+            attempts += 1
+            if not recovers or attempts == 1:
+                raise RuntimeError("Server is busy")
+            return False
+
+        header.Find.Execute.side_effect = execute
+        doc.StoryRanges.append(header)
+        with patch("src.word_processor.time.sleep"):
+            success, error = wp.print_document(
+                str(tmp_path), "Wednesday", date(2026, 1, 14), "Test Printer"
+            )
+        assert success is recovers
+        if recovers:
+            assert attempts == 7  # Six patterns, with the first retried once.
+            assert error is None
+            doc.PrintOut.assert_called_once_with(False)
+        else:
+            assert attempts == 5
+            assert "busy" in error.lower()
+            doc.PrintOut.assert_not_called()
+
+    def test_normalization_retries_the_same_operation(
+        self, wp, printable_doc, tmp_path
+    ):
+        """A busy normalization must be retried, not skipped before date matching."""
+        find = printable_doc.StoryRanges[0].Find
+        first_call = True
+
+        def execute(*args):
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                raise RuntimeError("Server is busy")
+            return bool(args[3])
+
+        find.Execute.side_effect = execute
+        with patch("src.word_processor.time.sleep"):
+            result = wp.print_document(
+                str(tmp_path), "Wednesday", date(2026, 1, 14), "Test Printer"
+            )
+        assert result == (True, None)
+        assert [call.args[0] for call in find.Execute.call_args_list[:2]] == [
+            "^s",
+            "^s",
+        ]
+        printable_doc.PrintOut.assert_called_once_with(False)
+
+    @pytest.mark.parametrize("close_error", ["Document close failed", "Server is busy"])
+    def test_successful_submission_survives_cleanup_failure(
+        self, wp, printable_doc, tmp_path, close_error, caplog
+    ):
+        """An already-submitted schedule must not enter the retry/failure list."""
+        printable_doc.Close.side_effect = RuntimeError(close_error)
+        with patch("src.word_processor.time.sleep"):
+            result = wp.print_document(
+                str(tmp_path), "Wednesday", date(2026, 1, 14), "Test Printer"
+            )
+        assert result == (True, None)
+        printable_doc.PrintOut.assert_called_once_with(False)
+        printable_doc.Close.assert_called_with(0)
+        assert "Error closing document" in caplog.text
+        assert (tmp_path / "Wednesday.docx").read_text() == "original template"
+
+    def test_cleanup_retry_does_not_resubmit_document(
+        self, wp, printable_doc, tmp_path
+    ):
+        """Recovery from a busy Close may retry cleanup only, never PrintOut."""
+        printable_doc.Close.side_effect = [RuntimeError("Server is busy"), None]
+        with patch("src.word_processor.time.sleep"):
+            result = wp.print_document(
+                str(tmp_path), "Wednesday", date(2026, 1, 14), "Test Printer"
+            )
+        assert result == (True, None)
+        printable_doc.PrintOut.assert_called_once_with(False)
+        assert printable_doc.Close.call_count == 2
+
+    def test_shutdown_never_saves_leftover_edited_documents(self, wp, printable_doc):
+        """If document cleanup fails, final Word shutdown must still discard edits."""
+        word_app = wp.word_app
+        wp.shutdown()
+        word_app.Quit.assert_called_once_with(0)
 
     def test_safe_com_call_rejects_zero_retries(self, wp):
         """safe_com_call should raise ValueError for retries < 1."""

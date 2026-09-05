@@ -5,7 +5,7 @@ This module contains all named constants used throughout the application
 to avoid magic numbers and strings.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Final, Union
 
 __all__ = [
@@ -46,6 +46,7 @@ __all__ = [
     "AUTO_RESIZE_MIN_HEIGHT",
     "COLORS",
     "FONTS",
+    "THEMES",
 ]
 
 # Weekday constants (Python's datetime.weekday() returns 0=Monday, 6=Sunday)
@@ -88,7 +89,7 @@ CONFIG_FILENAME: Final = "config.json"
 LOG_FILENAME: Final = "shiftpress.log"
 
 # UI Constants
-WINDOW_WIDTH: Final = 1040
+WINDOW_WIDTH: Final = 1120
 WINDOW_RESIZABLE: Final = True
 
 # Progress bar
@@ -124,21 +125,25 @@ WD_REPLACE_ALL: Final = 2  # wdReplaceAll
 class Colors:
     """Color scheme constants for the application UI."""
 
-    background: str = "#16171A"  # Window charcoal
-    surface: str = "#24262A"  # Raised graphite work surface
-    input: str = "#1B1C20"  # Recessed native input surface
+    background: str = "#091422"
+    surface: str = "#0C1826"
+    input: str = "#131C27"
     accent: str = "#F2B340"  # Press amber — Setup title and selection chrome
-    night_accent: str = "#38BDF8"  # Sky-400 — Night shift identity (night sky)
-    day_accent: str = "#F2B340"  # Press amber — Day shift identity (daylight)
-    action: str = "#1267C9"  # Saturated print-action blue
-    action_hover: str = "#0F56A8"  # Deeper action blue
-    text_main: str = "#F4F4F5"  # Zinc-100 — warm off-white
-    text_dim: str = "#B5B7BD"  # High-contrast supporting text
+    night_accent: str = "#8BCFF5"
+    day_accent: str = "#ECC17E"
+    action: str = "#8EBBFF"
+    action_hover: str = "#B0CFFF"
+    action_text: str = "#102038"
+    text_main: str = "#F2F6FC"
+    text_dim: str = "#B4C2D4"
     success: str = "#4ADE80"  # Emerald-400
     error: str = "#FB7185"  # Rose-400 — softer red
-    border: str = "#5A5D64"  # Divider steel
-    secondary: str = "#303238"  # Secondary controls and hover states
+    border: str = "#44556B"
+    secondary: str = "#29374A"
     accent_hover: str = "#D99A25"  # Deeper amber press state
+    header: str = "#081221"
+    night_surface: str = "#203248"
+    day_surface: str = "#332D24"
 
 
 FontSpec = Union[tuple[str, int], tuple[str, int, str]]
@@ -153,12 +158,12 @@ def _font_families() -> tuple[str, str]:
     import sys
 
     if sys.platform == "darwin":
-        return "SF Pro Text", "SF Pro Display"
+        return "Avenir Next", "Avenir Next"
     if sys.platform.startswith("linux"):
         return "Ubuntu", "Ubuntu"
-    # Windows — use the optical role intended for each size. Tkinter silently
-    # falls back to Segoe UI when the variable families are unavailable.
-    return "Segoe UI Variable Text", "Segoe UI Variable Display"
+    # Both ship with supported Windows 10/11 installations. Bahnschrift lends
+    # the schedule headings a precise, industrial voice; Segoe keeps forms familiar.
+    return "Segoe UI", "Bahnschrift"
 
 
 _BODY_FONT_FAMILY, _DISPLAY_FONT_FAMILY = _font_families()
@@ -171,6 +176,8 @@ class Fonts:
     main: FontSpec = (_BODY_FONT_FAMILY, 11)
     bold: FontSpec = (_BODY_FONT_FAMILY, 11, "bold")
     header: FontSpec = (_DISPLAY_FONT_FAMILY, 24, "bold")
+    brand: FontSpec = (_DISPLAY_FONT_FAMILY, 29, "bold")
+    section: FontSpec = (_DISPLAY_FONT_FAMILY, 18, "bold")
     card_title: FontSpec = (_DISPLAY_FONT_FAMILY, 13, "bold")
     sub: FontSpec = (_BODY_FONT_FAMILY, 10)
     button: FontSpec = (_BODY_FONT_FAMILY, 14, "bold")
@@ -178,4 +185,25 @@ class Fonts:
 
 # Global color and font instances
 COLORS = Colors()
+THEMES = {
+    "midnight": COLORS,
+    "rose": replace(
+        COLORS,
+        background="#15131B",
+        surface="#171620",
+        input="#191620",
+        header="#160F1E",
+        border="#514558",
+        text_main="#F8F3F8",
+        text_dim="#C0ADC3",
+        action="#E59AC8",
+        action_hover="#F0B9DC",
+        action_text="#251522",
+        secondary="#352C3D",
+        night_accent="#B7B5ED",
+        day_accent="#E9B77E",
+        night_surface="#252339",
+        day_surface="#35272B",
+    ),
+}
 FONTS = Fonts()

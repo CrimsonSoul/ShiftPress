@@ -7,52 +7,42 @@ related_targets: ["src/main.py"]
 
 ## Scope and Mode
 
-- Surface: ShiftPress main Tkinter window (`src/ui.py`)
-- Mode: Operate
-
-## Audience and Job
-
-An operator prepares deliberate Word-backed schedule print runs. The common
-run is the current Night schedule plus the following Day schedule, while either
-shift may independently use a single date or a range.
-
-## Primary Task and Content
-
-Confirm template/printer setup, independently include Night and Day work, set
-each date scope, review the exact print manifest, then print. Both shifts must
-remain visible. The manifest must state actual jobs and document counts.
-
-## Constraints
-
-- Standard Tkinter/ttk widgets only.
-- Windows desktop, Microsoft Word COM, and physical printer workflow.
-- Preserve cancellation, progress, preflight, and failure reporting.
-- No custom-painted Canvas controls, web effects, hidden tabs, or image-based
-  widgets. A plain Canvas may provide native vertical overflow recovery.
-- Do not claim readiness before preflight succeeds.
+ShiftPress main Tkinter window, Setup, and How to use; mode: Operate. An operator
+confirms setup, independently selects Night and Day dates/ranges, reviews the
+exact manifest, and prints. The common run is Night today plus Day tomorrow.
 
 ## Chosen Direction
 
-Low-risk Independent Shift Sections using the approved side-by-side
-composition. Night uses written night-sky blue identity, Day uses written
-daylight amber identity, and both share the same native control structure.
+Dark-only precision scheduling desk; two palettes, Midnight and pink-focused
+Rose. Generated targets: [Rose](../mocks/shiftpress-rose-reference.png) and
+[Midnight](../mocks/shiftpress-midnight-reference.png). The user requested image
+fidelity, dark-only color choices, and more distinctive typography; these are
+implementation targets, not a claim of separate image approval.
 
-## Memorable Moment
+THESIS: make the next shift's paper consequences effortless to inspect.
+OWN-WORLD: dark ink, generous margins, precise native controls, tinted shift
+headers; expressive headings over calm form text.
+STORY: identify setup, select independent scopes, inspect output, print.
+FIRST VIEWPORT: brand/theme/help rail, compact three-column setup, equal Night
+and Day work areas, manifest and a single prominent action.
+FORM: direction seed `16019748`, scheduling desk (candidate 3); horizontal
+choice controls and full-width date rows. Native controls replace decorative
+mockup pictograms and textures; typography follows the user's later request.
 
-The operator can compare both selected shift scopes at once, then read one
-full-width manifest that says exactly what paper the button will produce.
+[PRODUCT.md](../../PRODUCT.md) owns behavior;
+[DESIGN.md](../../DESIGN.md) owns tokens, layout, interactions, and icon rules.
+Read those guides only when the task concerns their contract.
 
-## Resolved Decisions
+## Validation boundary
 
-Window dimensions are no longer fixed tokens. Both date modes are built to the
-same height, and geometry is derived from Tk's computed requirement at launch.
-When the rendered requirement exceeds the usable display, a native vertical
-scrollbar appears and keyboard focus reveals the active control, keeping the
-primary action reachable under Windows text scaling.
+Render real Tk widgets for clipping, equal-height date modes, keyboard focus,
+disabled/degraded states, long values, and main/Setup overflow. Check Windows
+work-area sizing and text scaling; both shifts and the primary action must
+remain reachable. Mocked widget tests and web-oriented detectors cannot prove
+native geometry or usability. Use genuine current runtime screenshots only.
+Verify all dropdowns in both palettes, help keyboard/overflow behavior, and a
+short main window with Print/Cancel visible before and after form scrolling.
 
-Shift identity resolved to night-sky blue for Night and daylight amber for Day,
-matching the sun-and-moon reading an operator already carries.
-
-The application icon was resolved as "the pair leads": two offset sheets, Night
-behind and Day in front. Approved comp:
-`.impeccable/mocks/icon-2-two-sheets-approved.png`.
+Readiness, progress, cancellation, and failure reporting must match the
+controller. Complete the [Windows smoke test](../../docs/windows-smoke-test.md)
+before claiming Word COM and physical printing are verified.
