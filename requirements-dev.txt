@@ -17,5 +17,5 @@ pytest-cov>=7.0.0
 # black is pinned exactly: it fixes a stable style per calendar year, so a
 # floor would let formatting drift between contributors and CI.
 pylint>=4.0.5
-black==26.5.1
+black==26.10.1
 mypy>=2.3.0
